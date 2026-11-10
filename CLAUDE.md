@@ -178,6 +178,12 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Foundation Models facts (Apple's documentation, read 2026-11-10; not a decision, here so it isn't looked up twice):**
+  - `SystemLanguageModel.contextSize` works from macOS 26.0 (back-deployed; in the SDK since 26.4) and `tokenCount(for:)` from macOS 26.4, so both work on the user's Mac and compile with Xcode 26.6. Apple's documentation gives the context window as 4,096 tokens.
+  - The unavailable reasons are `deviceNotEligible`, `appleIntelligenceNotEnabled` and `modelNotReady`. Generation errors on macOS 26 are `LanguageModelSession.GenerationError` (context window exceeded, guardrail violation, refusal, unsupported language or locale, rate limited, and others).
+  - The on-device model changed in macOS 26.4 and changes again in macOS 27, so prompts need re-testing after both.
+  - Only in the macOS 27 SDK: `SystemLanguageModel.Variant`, dynamic profiles, the `LanguageModel` protocol for other models (Apple lists open-source MLX and Core AI adapters for it), `PrivateCloudComputeLanguageModel`, and the new error types (`LanguageModelError` and others). On macOS 26 the fallback is `GenerationError` behind an availability check.
+- **Environment (2026-11-10):** the same Linux cloud container as for Ithil. Apple's documentation can be read from it: `https://developer.apple.com/tutorials/data/documentation/<path>.json` returns a page as JSON. `docs.github.com` and `github.blog` are blocked by the environment's network policy, so facts about runners come from the `actions/runner-images` repository.
 - **Name (user, 2026-11-10):** Elenath. Repo https://github.com/Visaug36/Elenath.
 - **Platform (user, 2026-11-10):** Mac only for now. Built natively in Swift like Ithil (proposed in planning, and the user went ahead with it). Windows maybe later, as a separate app reading the same folder.
 - **Fully local (user, 2026-11-10):** no network, no accounts, no cloud model.
@@ -189,9 +195,14 @@ Keep this section current. Newest first.
 - **Ithil (user, 2026-11-10):** Elenath looks like Ithil, and Nano bot can read Ithil's data.
 
 ### Open items
+- Waiting for the user (asked 2026-11-10): the five start-up questions (languages, where notes live today, the Ithil folder, the first spaces and which are sealed, public or private and the license) and the OK for the Phase 1 plan. The plan was shown in the session and isn't stored in the repo.
+- CI toolchain, proposed with the plan and waiting for the same OK: gate on `macos-26` with Xcode 26.6, because that is the macOS generation the user's Mac runs, plus a build-and-test job on `xcode-27` that may fail without blocking a merge.
+- Not verified (the pages are blocked here): whether GitHub has declared the `xcode-27` image generally available, and what macOS runner minutes cost if the repo becomes private.
 - The languages I write in, and whether the embedder and the model cover them.
 - The seven places my notes live today.
 - Needs a check on a real Mac (CI can't do it): Does the on-device model answer from the sandboxed, ad-hoc-signed app? Do the embedding assets arrive without a network entitlement? Do the folder bookmarks survive an update to a new ad-hoc-signed build?
 
 ### Status
+- 2026-11-10: **start-up done, waiting for the user.** The brief is saved as CLAUDE.md on `claude/new-session-fplgmb`. Ithil was read: its CLAUDE.md, docs, the Xcode project, Config, scripts, workflows, and the storage, folder access, hotkey, appearance and onboarding code. The repo is public and has no license yet. Nothing is built.
+  - Runners on 2026-11-10 (from `actions/runner-images`): `macos-26` (also `macos-latest`) is macOS 26.7.2 on arm64 with Xcode 26.0.1 to 26.6; 26.6 is the default and its SDK is macOS 26.5. `xcode-27` is macOS 27.0.1 with Xcode 27.0, 27.1 (the default) and 27.2, and the README still marks that image as a preview. `macos-15` has Xcode 16.x and 26.0.1 to 26.3. The macOS 14 images were retired on 2026-11-02.
 - 2026-11-10: brief written. Nothing built yet.

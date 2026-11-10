@@ -178,6 +178,16 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Phase 1 plan (2026-11-10):** shown with the start-up questions. The user answered the questions and raised no objection, which is taken as the OK. Nothing reaches `main` before the icon pick, so the user can still object. The plan's choices:
+  - CI gates on `macos-26` with the newest Xcode 26.x there (26.6), because tests and screenshots then run on the macOS generation the user's Mac has. A second job builds and tests on `xcode-27` and may fail without blocking a merge. Switch the two when the user moves to macOS 27.
+  - After Phase 1 is merged, a 0.0.1 prerelease of the empty window proves that the release workflow can create the tag itself.
+  - 0.1.0 gets a small diagnostics report (model, embedding assets, folder bookmark), so the "needs a real Mac" items are answered at the first stop point.
+- **Start-up answers (user, 2026-11-10):**
+  - Languages: mainly English. Which others isn't known yet.
+  - Notes today: WhatsApp chats, old Markdown files, and notes on a phone and on another laptop (the apps aren't named yet).
+  - Ithil folder: Ithil's default, `~/Documents/Ithil`.
+  - Spaces: left to Claude. Recommended: Uni, Red Cross (sealed), Ideas and Personal. Only Red Cross is sealed, because it can hold other people's details; any space can be sealed later in Settings. Onboarding suggests these four and the user can change them there.
+  - Repo: public. MIT license, copyright "Visaug36", with Ithil's community files. Because the repo is public, this log and the docs name apps and languages but no personal paths or details.
 - **Foundation Models facts (Apple's documentation, read 2026-11-10; not a decision, here so it isn't looked up twice):**
   - `SystemLanguageModel.contextSize` works from macOS 26.0 (back-deployed; in the SDK since 26.4) and `tokenCount(for:)` from macOS 26.4, so both work on the user's Mac and compile with Xcode 26.6. Apple's documentation gives the context window as 4,096 tokens.
   - The unavailable reasons are `deviceNotEligible`, `appleIntelligenceNotEnabled` and `modelNotReady`. Generation errors on macOS 26 are `LanguageModelSession.GenerationError` (context window exceeded, guardrail violation, refusal, unsupported language or locale, rate limited, and others).
@@ -195,9 +205,9 @@ Keep this section current. Newest first.
 - **Ithil (user, 2026-11-10):** Elenath looks like Ithil, and Nano bot can read Ithil's data.
 
 ### Open items
-- Waiting for the user (asked 2026-11-10): the five start-up questions (languages, where notes live today, the Ithil folder, the first spaces and which are sealed, public or private and the license) and the OK for the Phase 1 plan. The plan was shown in the session and isn't stored in the repo.
-- CI toolchain, proposed with the plan and waiting for the same OK: gate on `macos-26` with Xcode 26.6, because that is the macOS generation the user's Mac runs, plus a build-and-test job on `xcode-27` that may fail without blocking a merge.
-- Not verified (the pages are blocked here): whether GitHub has declared the `xcode-27` image generally available, and what macOS runner minutes cost if the repo becomes private.
+- Waiting for the user: the icon pick (three options, Phase 1).
+- To ask with the Phase 2 product questions: which other languages besides English, and which apps hold the notes on the phone and the other laptop (for docs/IMPORT.md).
+- Not verified (the page is blocked here): whether GitHub has declared the `xcode-27` image generally available.
 - The languages I write in, and whether the embedder and the model cover them.
 - The seven places my notes live today.
 - Needs a check on a real Mac (CI can't do it): Does the on-device model answer from the sandboxed, ad-hoc-signed app? Do the embedding assets arrive without a network entitlement? Do the folder bookmarks survive an update to a new ad-hoc-signed build?

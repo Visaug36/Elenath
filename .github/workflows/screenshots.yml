@@ -1,0 +1,96 @@
+name: Screenshots
+
+# Builds Elenath, takes screenshots from the -demo build on a real macOS runner, and commits them to
+# docs/images on the branch it ran on, so every phase's pull request shows what the app looks like.
+# Run it by hand from the Actions tab after visual changes.
+
+on:
+  workflow_dispatch:
+  # Also when the app or the screenshot tooling changes on a working branch, so the images keep up with the
+  # UI. The commit it pushes doesn't trigger another run.
+  push:
+    branches:
+      - "claude/**"
+    paths:
+      - "Elenath/**"
+      - "scripts/screenshots/**"
+      - ".github/workflows/screenshots.yml"
+
+permissions:
+  contents: write
+
+# A newer push makes an older run's images stale.
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XCODE_MAJOR: "26"
+
+jobs:
+  screenshots:
+    name: Take screenshots
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, so the commit step can rebase onto a branch that moved on.
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild build -project Elenath.xcodeproj -scheme Elenath -configuration Release \
+            -destination 'platform=macOS' -derivedDataPath build/DerivedData -quiet
+
+      - name: Display
+        # The runner's screen is 1024x768, too small for a 1280x800 window.
+        run: |
+          set -euo pipefail
+          brew install displayplacer > /dev/null
+          list=$(displayplacer list || true)
+          screen=$(awk '/^Persistent screen id:/ { print $4 }' <<< "$list" | head -n 1)
+          displayplacer "id:$screen res:1920x1080 hz:60 color_depth:7 enabled:true scaling:off origin:(0,0) degree:0" \
+            || true
+          sleep 2
+          current=$( (displayplacer list || true) | grep -e '<-- current mode' || true)
+          echo "$current"
+          [[ "$current" == *1920x1080* ]]
+          # Overlay scroll bars, as with a trackpad (the runner has no input devices, so it shows legacy ones).
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+
+      - name: Capture
+        run: scripts/screenshots/capture.sh build/DerivedData/Build/Products/Release/Elenath.app docs/images
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: screenshots
+          path: |
+            docs/images/window-*.png
+            build/screenshot-logs
+          if-no-files-found: ignore
+
+      - name: Commit screenshots
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/screenshots/keep-unchanged.sh docs/images
+          git add docs/images/*.png
+          if git diff --cached --quiet; then
+            echo "Screenshots unchanged."
+            exit 0
+          fi
+          git commit -m "Update screenshots"
+          # The branch may have moved on while the shots were taken.
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

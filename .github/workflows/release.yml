@@ -1,0 +1,177 @@
+name: Release
+
+# Publishes a GitHub Release when the version on main has no release yet.
+#
+# The version is MARKETING_VERSION in the Xcode project. On a push to main, the workflow publishes it when
+# CHANGELOG.md has a dated section for it ("## [0.1.0] - 2026-12-01") and no v0.1.0 release exists. It creates
+# the tag itself, on the commit it built, so nobody has to push a tag.
+#
+# - Versions below 1.0.0 are published as prereleases, without asking.
+# - 1.0.0 and later are only published by hand: Actions > Release > Run workflow, with "publish" typed into
+#   the confirmation field.
+#
+# The build is arm64 and ad-hoc signed (see docs/RELEASE_CHECKLIST.md).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "Elenath.xcodeproj/project.pbxproj"
+      - "CHANGELOG.md"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "publish" to release version 1.0.0 or later
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+# One release at a time; a second push waits for the first to finish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  XCODE_MAJOR: "26"
+
+jobs:
+  plan:
+    name: Is there a version to release?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the version and decide
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          versions=$(sed -n 's/^[[:space:]]*MARKETING_VERSION = \([0-9][0-9.]*\);$/\1/p' Elenath.xcodeproj/project.pbxproj | sort -u)
+          if [[ $(grep -c . <<< "$versions") -ne 1 ]]; then
+            echo "::error::Expected one MARKETING_VERSION in the project, found: $(tr '\n' ' ' <<< "$versions")"
+            exit 1
+          fi
+          version="$versions"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::MARKETING_VERSION must look like 1.2.3, not $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          publish=true
+          if ! grep -qE "^## \[${version//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "::notice::CHANGELOG.md has no dated section for $version, so there is nothing to release."
+            publish=false
+          elif gh release view "v$version" > /dev/null 2>&1; then
+            echo "::notice::v$version is already released."
+            publish=false
+          fi
+
+          prerelease=false
+          if [[ "${version%%.*}" -eq 0 ]]; then
+            prerelease=true
+          elif [[ "$publish" == true && "$CONFIRM" != "publish" ]]; then
+            echo "::notice::Version $version is ready. Versions from 1.0.0 are published by hand: run this workflow with \"publish\" in the confirmation field."
+            publish=false
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Version $version: publish=$publish prerelease=$prerelease"
+
+  release:
+    name: Build and publish
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Build Release (arm64, ad-hoc signed)
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project Elenath.xcodeproj -scheme Elenath -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath build/Elenath.xcarchive \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual
+          app=build/Elenath.xcarchive/Products/Applications/Elenath.app
+          archs=$(lipo -archs "$app/Contents/MacOS/Elenath")
+          echo "Architectures: $archs"
+          [[ "$archs" == "arm64" ]]
+          codesign --verify --deep --strict --verbose=2 "$app"
+          scripts/check-rules.sh "$app"
+          mkdir -p build/release
+          cp -R "$app" build/release/
+
+      - name: Zip with ditto and checksum
+        id: package
+        run: |
+          set -euo pipefail
+          name="Elenath-$VERSION.zip"
+          (cd build/release && ditto -c -k --sequesterRsrc --keepParent Elenath.app "$name")
+          (cd build/release && shasum -a 256 "$name" > "$name.sha256")
+          cat "build/release/$name.sha256"
+          echo "zip=build/release/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          {
+            echo "**To install, download \`Elenath-$VERSION.zip\` below** and unzip it to get **Elenath.app**, then drag it"
+            echo "to Applications. (\"Source code\" is the project's code, only needed to build Elenath yourself.)"
+            echo
+          } > build/release/notes.md
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md >> build/release/notes.md
+          {
+            echo
+            echo "_This build isn't notarized. On first launch, open **System Settings → Privacy & Security**"
+            echo "and click **Open Anyway** next to the message about Elenath. It needs macOS 26 on Apple silicon._"
+          } >> build/release/notes.md
+          cat build/release/notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          zip="${{ steps.package.outputs.zip }}"
+          prerelease_flag=""
+          if [[ "$PRERELEASE" == "true" ]]; then
+            prerelease_flag="--prerelease"
+          fi
+          # Creates the tag v$VERSION on the commit that was built.
+          gh release create "v$VERSION" "$zip" "$zip.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Elenath $VERSION" \
+            --notes-file build/release/notes.md \
+            $prerelease_flag

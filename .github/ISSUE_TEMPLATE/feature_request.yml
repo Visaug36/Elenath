@@ -1,0 +1,27 @@
+name: Feature request
+description: An idea that would make Elenath better.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Elenath stays small on purpose: offline, private, plain files, and reliable before anything else. Ideas
+        that fit that are welcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: Describe how you'd like it to work. Sketches or screenshots are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you tried instead?

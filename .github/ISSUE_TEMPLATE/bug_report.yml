@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in Elenath doesn't work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. If it's a security problem, please don't file it here; see
+        [SECURITY.md](https://github.com/Visaug36/Elenath/blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a note in a space
+        2. Rename it in Finder
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: elenath-version
+    attributes:
+      label: Elenath version
+      description: Elenath → About Elenath.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description:  → About This Mac.
+      placeholder: "macOS 26.6"
+    validations:
+      required: true
+  - type: dropdown
+    id: appearance
+    attributes:
+      label: Appearance
+      options:
+        - Night
+        - Dawn
+        - Match System
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: >
+        Screenshots or a screen recording help a lot. Please leave out anything private: note titles, note text,
+        file names or your folder's contents.

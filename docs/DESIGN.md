@@ -142,7 +142,7 @@ for a space's own symbol.
 
 | Asset | What it is |
 |---|---|
-| `AppIcon` | Not chosen yet. Three options are in `docs/icon/`, all in the style of Ithil's icon: the same night sky, hill and small stars, with a constellation where Ithil has its moon. |
+| `AppIcon` | An open notebook glowing amber on a dark hill, under the Plough drawn as a constellation, on Ithil's deep navy night sky with small stars: Ithil's icon with a notebook where it has its window and a constellation where it has its moon. The body sits on Apple's 824/1024 grid with a soft drop shadow, at 16–512 pt @1x/@2x. The master is `docs/icon/icon.svg`; `scripts/icon/make-appicon.sh` renders it, and a 1024 px copy is in `docs/images/icon-1024.png`. |
 | `StarField` | A static 512 × 512 pt tile (@1x, @2x) of about 95 small dots, drawn with `.resizable(resizingMode: .tile)`. Night: cream `#EDE6D3` stars; Dawn: faint amber `#C79A55` specks. Transparent, so it sits on any background. |
 | `EmptySky` | SVG. A small constellation with a glowing star over a hill, and a house with a lit door. For the empty window and an empty space or folder. |
 | `EmptyInbox` | SVG, drawn with the Inbox. An open tray on the hill with one star above it. |

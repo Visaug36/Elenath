@@ -178,12 +178,17 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Icon (user, 2026-11-11):** option A, the open notebook under the Plough. The master is `docs/icon/icon.svg`; `scripts/icon/make-appicon.sh` renders the AppIcon set and the README images from it. The other two options are gone from the tree (they are in the history).
+- **Import (user, 2026-11-11):**
+  - WhatsApp: the notes are in a chat with oneself, so every message is a note. A chat export becomes notes where it is dropped (usually the Inbox): messages sent within a few minutes of each other are one note, dated when they were sent.
+  - The other laptop: files in folders. Dropping a folder covers it.
+  - The phone: no steps per app are wanted. The user's words: "dont care about where other notes are, I will import them using the built in ai". So docs/IMPORT.md gives the general route (paste, or export and drop on the Inbox), and Nano bot's File job does the sorting. Nano bot arrives in Phase 4 (0.2.0); until then the Inbox holds what was dumped and filing is by hand. The user was told this.
 - **Phase 1 as built (2026-11-11):**
   - **Project layout:** as Ithil's. `Elenath.xcodeproj` (objectVersion 77, file-system-synchronized folders, so new files need no project edit), targets `Elenath`, `ElenathCore` (static framework) and `ElenathCoreTests` (Swift Testing, not hosted). Swift 6 language mode, macOS 26.0, `ARCHS = arm64`, ad-hoc signing, sandbox and hardened runtime, entitlements in `Config/Elenath.entitlements`.
   - **Color tokens:** Ithil's names and values. `Subject{Clay,Teal,Iris,Fern,Rose}` became `Space…`.
   - **CI:** two jobs, both green from the first run, about two minutes each. The gate runs on `macos-26` with Xcode 26.6 (macOS 26.7.2): the project's rules, lint, tests, a test count from the xcresult (a run with no tests fails), the String Catalog check, an arm64 Release archive and zero warnings. The second job runs on `xcode-27` with Xcode 27.2 (macOS 27.0.1) and may fail without failing the run.
   - **Rules as checks:** `scripts/check-rules.sh` fails on a Swift package, on a UI import in `ElenathCore`, and on any entitlement beyond the sandbox, app-scope bookmarks and user-selected files, in the project and in the archived app.
-  - **Platform facts from CI:** the system SQLite on macOS 26 and 27 has FTS5 and the trigram tokenizer (`SQLiteProbeTests`).
+  - **Platform facts from CI:** the system SQLite on macOS 26.7.2 is 3.51.0, and on macOS 26 and 27 it has FTS5 and the trigram tokenizer (`SQLiteProbeTests`).
   - **Screenshots:** the Screenshots workflow commits `docs/images/window-*.png` to the branch it ran on, so pull before pushing after a run. With no toolbar items, a window needs `.toolbarBackground(.hidden, for: .windowToolbar)` or macOS 26 draws a bare toolbar band.
   - **Release workflow:** on a push to `main` it publishes `MARKETING_VERSION` when CHANGELOG has a dated section for it and no release holds the zip yet, creating the tag itself with `gh release create --target`. Versions below 1.0.0 are prereleases. From 1.0.0 it only publishes when run by hand with "publish" typed in, or to complete a release the user made on the Releases page. Its first real run is 0.0.1, after Phase 1 is merged.
 - **Local checks (2026-11-11):** `ElenathCore` and its tests build and run on Linux with the open-source toolchain, so most logic is checked in seconds without CI. `scripts/dev/bootstrap-swift.sh` installs Swift 6.3.3 (the compiler in Xcode 26.6), and `scripts/dev/core-test.sh` lints everything and runs the core tests. Only the app layer needs CI to compile. To keep this working, Apple-only calls in `ElenathCore` sit behind `#if canImport` or a protocol (docs/ARCHITECTURE.md).
@@ -192,7 +197,6 @@ Keep this section current. Newest first.
   - A note's title is its file name. A new top-level folder made in Finder becomes an unsealed space. A `space.json` that can't be read or restored makes the space sealed until the user decides.
   - Today and other "everywhere" views read no sealed space; a sealed space has its own page. Inbox items are found only in the Inbox.
   - Links take the color of the space they point to and are underlined, since amber is reserved. Markdown markers stay visible and dimmed. Note text is 15 pt. The editor is an `NSTextView` on TextKit 1.
-- **Icon (2026-11-11):** three options are in `docs/icon/` (A: open notebook under the Plough; B: the constellation fills the sky; C: Ithil's arched window with a star). Claude recommends A. `scripts/icon/make-appicon.sh` renders the chosen master into the AppIcon set.
 - **Cloud environment (2026-11-11):** the user's Default environment has unrestricted network access and no setup script. It is left as it is; the Swift toolchain is installed per session with the bootstrap script.
 - **Phase 1 plan (2026-11-10):** shown with the start-up questions. The user answered the questions and raised no objection, which is taken as the OK. Nothing reaches `main` before the icon pick, so the user can still object. The plan's choices:
   - CI gates on `macos-26` with the newest Xcode 26.x there (26.6), because tests and screenshots then run on the macOS generation the user's Mac has. A second job builds and tests on `xcode-27` and may fail without blocking a merge. Switch the two when the user moves to macOS 27.
@@ -221,9 +225,8 @@ Keep this section current. Newest first.
 - **Ithil (user, 2026-11-10):** Elenath looks like Ithil, and Nano bot can read Ithil's data.
 
 ### Open items
-- Waiting for the user: the icon pick (A, B or C). Phase 1 is merged after it.
-- Asked on 2026-11-11, needed for Phase 2: which other languages besides English; which apps hold the notes on the phone and the other laptop; and how WhatsApp is used for notes (a chat with oneself or many chats, whole chats or only the user's own messages).
-- Waiting for the user's yes or no on the defaults listed under Decisions.
+- Not answered yet: which other languages besides English. Keyword search is built for space-separated words first, with the trigram table for anything else.
+- The defaults listed under Decisions were shown to the user on 2026-11-11. They stand unless the user changes them.
 - The Liquid Glass app icon for macOS 26 (an Icon Composer `.icon` file) is not planned; the AppIcon set is used, as in Ithil.
 - Not verified (the page is blocked here): whether GitHub has declared the `xcode-27` image generally available.
 - The languages I write in, and whether the embedder and the model cover them.

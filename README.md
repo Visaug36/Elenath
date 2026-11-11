@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/icon-256.png" width="128" height="128" alt="Elenath's app icon: an open notebook glowing under a constellation">
+</p>
+
 <h1 align="center">Elenath</h1>
 
 <p align="center">

@@ -582,7 +582,7 @@ public struct CaptureParser: Sendable {
 public indirect enum ImportItem: Hashable, Sendable {
     case note(source: URL, title: String)             // .md, .markdown, .txt: copied as a note, bytes unchanged
     case document(source: URL, title: String)         // .rtf, .rtfd, .doc, .docx, .odt, .html: text becomes a note
-    case chatExport(source: URL, title: String)       // a WhatsApp export: one note per chat
+    case chatExport(source: URL)                      // a WhatsApp export: its messages become Inbox notes
     case file(source: URL)                            // PDFs, images and everything else: copied as they are
     case folder(name: String, items: [ImportItem])
     case skipped(source: URL, reason: SkipReason)     // hidden items, another app's settings folder
@@ -599,14 +599,24 @@ public actor Importer {
     public func run(_ items: [ImportItem], into folder: ItemPath, container: Container,
                     progress: @escaping @Sendable (ImportProgress) -> Void) async throws -> ImportReport
 }
+public struct ChatMessage: Hashable, Sendable {
+    public var sent: Date?
+    public var sender: String
+    public var text: String
+    public var attachmentNames: [String]
+}
 public enum ChatExport {
     public static func isChatExport(_ text: String) -> Bool
-    public static func markdown(from text: String) -> String
+    public static func messages(from text: String, timeZone: TimeZone) -> [ChatMessage]
+    /// Messages sent within `gap` of each other become one note, dated when the first was sent.
+    public static func notes(from messages: [ChatMessage], gap: TimeInterval) -> [[ChatMessage]]
 }
 ```
 
 - Everything is **copied**. Originals are never moved or changed.
 - A converted document keeps its original: it is copied to `Attachments` and linked from the top of the note.
+- A chat export is a chat with oneself: every message is a note to file. Its notes go where it was dropped
+  (usually the Inbox), each with `created` set to when it was sent, and its photos and files in `Attachments`.
 - Folders keep their structure. Clashes get Finder-style numbers. Cancelling leaves what is already done.
 - docs/IMPORT.md has the steps for each place notes come from.
 

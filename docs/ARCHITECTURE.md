@@ -260,26 +260,38 @@ public struct FolderListing: Sendable {
     public var files: [FileEntry]                     // other documents
 }
 
-public actor LibraryCatalog {
-    public init(root: URL, safetyDirectory: URL, fileSystem: any FileSystem, timeSource: any TimeSource)
+public actor LibraryCatalog {                              // built
+    public init(root: URL, safetyDirectory: URL, knownLibraryID: LibraryID? = nil,
+                fileSystem: any FileSystem, timeSource: any TimeSource,
+                backupInterval: TimeInterval = 15 * 60, maxBackups: Int = 50)
     public nonisolated let root: URL
-    public func open() throws -> LibrarySnapshot           // loads library.json, finds and adopts spaces
-    public func create() throws -> LibrarySnapshot         // a brand-new library in an empty folder
+    public func open() async throws -> LibrarySnapshot     // loads library.json, finds and adopts spaces
+    public func create() async throws -> LibrarySnapshot   // a brand-new library in an empty folder
+    public func spaces() -> [Space]
     public func createSpace(named name: String, color: SpaceColor, symbol: String, sealed: Bool,
-                            description: String, keywords: [String]) throws -> Space
-    public func update(_ space: Space) throws              // everything but the name
-    public func renameSpace(_ id: SpaceID, to name: String) throws -> Space
-    public func reorderSpaces(_ order: [SpaceID]) throws
-    public func trashSpace(_ id: SpaceID) throws -> URL?   // the whole folder goes to the Trash
+                            description: String, keywords: [String]) async throws -> Space
+    public func update(_ space: Space) async throws        // everything but the name
+    public func renameSpace(_ id: SpaceID, to name: String) async throws -> Space
+    public func reorderSpaces(_ order: [SpaceID]) async throws
+    public func trashSpace(_ id: SpaceID) async throws -> URL?   // the whole folder goes to the Trash
+    public func folderURL(of container: Container) throws -> URL
+    public func url(for path: ItemPath, in container: Container, isDirectory: Bool) throws -> URL
+    public func ensureInbox() throws
     public func listing(of folder: ItemPath, in container: Container) throws -> FolderListing
-    public func url(for path: ItemPath, in container: Container) throws -> URL   // inside the root, or throws
     public nonisolated func contains(_ url: URL) -> Bool   // inside the root, links resolved
+}
+public enum LibraryCatalogError: Error, Equatable, Sendable {
+    case readOnly, unknownSpace, nameTaken(String), reservedName(String), outsideLibrary, notOpen
 }
 ```
 
-- `open()` reads every visible top-level folder except `Inbox` as a space. A folder without `.space` gets a
-  `space.json` (not sealed). A `space.json` that can't be read or restored makes the space sealed and lists
-  it in `sealedByDefault`.
+- `open()` reads every visible top-level folder except `Inbox` as a space. A folder Elenath has never seen
+  gets a `space.json` (not sealed). A `space.json` that can't be read or restored makes the space sealed and
+  lists it in `sealedByDefault`; so does a `.space` folder that vanished from a space Elenath knows, when
+  its safety copy is gone too. To tell the two apart, the safety directory keeps a record of which folder
+  was which space (`<library id>/folders.json`).
+- Every path it hands out is checked with `PathContainment`: inside the library, symbolic links resolved.
+  Listings leave out hidden items, Elenath's own folders, `Attachments`, board packages and links.
 - Sealing a space, or unsealing one, is `update(_:)`. The index needs no rebuild: each space has its own
   database, and `Reach` decides at query time what may be read.
 

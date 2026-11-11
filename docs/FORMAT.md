@@ -316,7 +316,7 @@ them is needed to open a library: all are rebuilt from the folder or are only a 
 
 | What | Where (under `Data/Library/Application Support/Elenath/`) |
 |---|---|
-| Safety copies of `library.json` and every `space.json` | `SafetyCopies/<library id>/` |
+| Safety copies of `library.json` (`<library id>.json`) and of every `space.json` (`<library id>/<space id>.json`), with a record of which folder is which space | `SafetyCopies/` |
 | The search index, one SQLite database per space and one for the Inbox | `Index/<library id>/` |
 | Edits that could not be saved, kept until the next launch | `Recovery/<library id>/` |
 

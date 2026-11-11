@@ -9,6 +9,8 @@ name: Release
 # - Versions below 1.0.0 are published as prereleases, without asking.
 # - 1.0.0 and later are only published by hand: Actions > Release > Run workflow, with "publish" typed into
 #   the confirmation field.
+# - A release published by hand on the Releases page (which makes the tag) gets the build and the changelog
+#   notes added to it.
 #
 # The build is arm64 and ad-hoc signed (see docs/RELEASE_CHECKLIST.md).
 
@@ -20,6 +22,9 @@ on:
       - "Elenath.xcodeproj/project.pbxproj"
       - "CHANGELOG.md"
       - ".github/workflows/release.yml"
+  # A release made on the Releases page. Releases this workflow creates don't start it again.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       confirm:
@@ -48,6 +53,8 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       publish: ${{ steps.plan.outputs.publish }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
+      existing: ${{ steps.plan.outputs.existing }}
+      ref: ${{ steps.plan.outputs.ref }}
     steps:
       - uses: actions/checkout@v7
 
@@ -56,6 +63,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CONFIRM: ${{ inputs.confirm }}
+          EVENT: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           versions=$(sed -n 's/^[[:space:]]*MARKETING_VERSION = \([0-9][0-9.]*\);$/\1/p' Elenath.xcodeproj/project.pbxproj | sort -u)
@@ -68,27 +77,47 @@ jobs:
             echo "::error::MARKETING_VERSION must look like 1.2.3, not $version"
             exit 1
           fi
+          tag="v$version"
+          if [[ "$EVENT" == "release" && "$RELEASE_TAG" != "$tag" ]]; then
+            echo "::error::The release's tag $RELEASE_TAG doesn't match the project's version $version."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           publish=true
+          existing=false
           if ! grep -qE "^## \[${version//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
             echo "::notice::CHANGELOG.md has no dated section for $version, so there is nothing to release."
             publish=false
-          elif gh release view "v$version" > /dev/null 2>&1; then
-            echo "::notice::v$version is already released."
-            publish=false
+          elif assets=$(gh release view "$tag" --json assets --jq '.assets[].name' 2> /dev/null); then
+            existing=true
+            if grep -qx "Elenath-$version.zip" <<< "$assets"; then
+              echo "::notice::$tag is already released."
+              publish=false
+            fi
           fi
 
           prerelease=false
           if [[ "${version%%.*}" -eq 0 ]]; then
             prerelease=true
-          elif [[ "$publish" == true && "$CONFIRM" != "publish" ]]; then
+          elif [[ "$publish" == true && "$EVENT" != "release" && "$CONFIRM" != "publish" ]]; then
             echo "::notice::Version $version is ready. Versions from 1.0.0 are published by hand: run this workflow with \"publish\" in the confirmation field."
             publish=false
           fi
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "Version $version: publish=$publish prerelease=$prerelease"
+
+          # Build the tag's commit when the tag is already there, otherwise the commit that started this run.
+          ref="$GITHUB_SHA"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null 2>&1; then
+            ref="refs/tags/$tag"
+          fi
+
+          {
+            echo "publish=$publish"
+            echo "prerelease=$prerelease"
+            echo "existing=$existing"
+            echo "ref=$ref"
+          } >> "$GITHUB_OUTPUT"
+          echo "Version $version: publish=$publish prerelease=$prerelease existing=$existing ref=$ref"
 
   release:
     name: Build and publish
@@ -99,8 +128,11 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      EXISTING: ${{ needs.plan.outputs.existing }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
 
       - name: Select Xcode
         run: |
@@ -165,13 +197,19 @@ jobs:
         run: |
           set -euo pipefail
           zip="${{ steps.package.outputs.zip }}"
+          if [[ "$EXISTING" == "true" ]]; then
+            # Published by hand on the Releases page, which made the tag: add the build and the notes to it.
+            gh release upload "v$VERSION" "$zip" "$zip.sha256" --clobber
+            gh release edit "v$VERSION" --title "Elenath $VERSION" --notes-file build/release/notes.md
+            exit 0
+          fi
           prerelease_flag=""
           if [[ "$PRERELEASE" == "true" ]]; then
             prerelease_flag="--prerelease"
           fi
           # Creates the tag v$VERSION on the commit that was built.
           gh release create "v$VERSION" "$zip" "$zip.sha256" \
-            --target "$GITHUB_SHA" \
+            --target "$(git rev-parse HEAD)" \
             --title "Elenath $VERSION" \
             --notes-file build/release/notes.md \
             $prerelease_flag

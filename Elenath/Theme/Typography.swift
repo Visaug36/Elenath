@@ -15,4 +15,8 @@ enum Typography {
     static var caption: Font { .system(size: 11, weight: .semibold) }
     static var footnote: Font { .system(size: 11) }
     static var code: Font { .system(size: 12.5, design: .monospaced) }
+
+    /// The text of a note, and code inside it.
+    static var noteBody: Font { .system(size: 15) }
+    static var noteCode: Font { .system(size: 13.5, design: .monospaced) }
 }

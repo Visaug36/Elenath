@@ -176,6 +176,7 @@ document type taken out.
 public protocol VersionedDocument: Codable, Hashable, Sendable {
     static var fileName: String { get }                 // "library.json"
     static var backupPrefix: String { get }             // "library-"
+    static var corruptPrefix: String { get }            // "library.corrupt-"
     static var currentSchemaVersion: Int { get }
     static var migrator: SchemaMigrator { get }         // JSON-object steps, version n → n + 1
     var documentID: UUID { get }
@@ -212,8 +213,10 @@ public struct DocumentLoad<Document: VersionedDocument>: Sendable {
 }
 
 public actor DocumentStore<Document: VersionedDocument> {
-    public init(folder: URL,                           // ".elenath" or "<space>/.space"
-                safetyFile: URL?,                      // nil: the id isn't known yet
+    public init(owner: URL,                            // the library folder, or a space's folder
+                metadataFolderName: String,            // ".elenath" or ".space"
+                safetyDirectory: URL,                  // the safety copy is <safetyDirectory>/<document id>.json
+                knownDocumentID: UUID?,                // finds the safety copy when the file is damaged
                 fileSystem: any FileSystem, timeSource: any TimeSource,
                 backupInterval: TimeInterval, maxBackups: Int)
     public func load() throws -> DocumentLoad<Document>

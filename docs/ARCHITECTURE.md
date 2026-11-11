@@ -490,6 +490,10 @@ public struct Reach: Hashable, Sendable {
 - `Retrieval` takes a `Workplace`, never a `Reach`: it builds the reach itself from the spaces as they are
   now, so a caller can't hand it a wider one. Queries about one note (`backlinks`, `resolve`) take the note
   and use its own container as the workplace.
+- **Reading a note for anything other than showing it to the user** (related notes, a summary, anything put
+  in front of the model) goes through `Retrieval.text(of:from:)`, which gives nothing for a note outside the
+  workplace's reach. `NoteStore` and `LibraryCatalog` are for the editor and the sidebar, which show the user
+  the place they opened. Nano bot is handed a `Retrieval` and nothing else.
 
 ```swift
 public actor Retrieval {
@@ -504,6 +508,7 @@ public actor Retrieval {
     public func openTasks(from workplace: Workplace, limit: Int) async throws -> [TaskHit]
     public func recentNotes(from workplace: Workplace, limit: Int) async throws -> [NoteHit]
     public func linkingNotes(to note: NoteRef) async throws -> [NoteRef]     // for LinkRewriter
+    public func text(of note: NoteRef, from workplace: Workplace) async throws -> String?   // nil outside the reach
     public func inboxCount() async throws -> Int                             // a number, never content
     public func filingDestinations() async -> [FilingDestination]
 }

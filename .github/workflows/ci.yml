@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # The gate. macOS 26 is the macOS generation the app is used on, so tests run against its frameworks.
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      # Newest stable Xcode with this major version on the runner (see CLAUDE.md).
+      XCODE_MAJOR: "26"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app
+          xcode=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+          sw_vers
+          # The system's SQLite, which the index is built on.
+          /usr/bin/sqlite3 -version
+
+      - name: Check the project's rules
+        run: scripts/check-rules.sh
+
+      - name: Lint (swift-format)
+        run: |
+          paths="Elenath ElenathCore ElenathCoreTests"
+          if ! xcrun swift-format lint --strict --recursive --parallel $paths; then
+            echo "::group::Patch that swift-format would apply"
+            xcrun swift-format format --in-place --recursive --parallel $paths
+            git --no-pager diff
+            echo "::endgroup::"
+            exit 1
+          fi
+
+      - name: Test (Debug)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild test \
+            -project Elenath.xcodeproj -scheme Elenath -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            -resultBundlePath build/TestResults.xcresult \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            2>&1 | tee build/test.log
+          echo "Files changed by the build (e.g. String Catalog sync):"
+          git status --porcelain
+
+      - name: Count the tests
+        # A run that quietly executes no tests must not pass.
+        run: |
+          set -euo pipefail
+          xcrun xcresulttool get test-results summary --path build/TestResults.xcresult --compact > build/test-summary.json
+          python3 - build/test-summary.json <<'PY'
+          import json
+          import sys
+
+          summary = json.load(open(sys.argv[1]))
+          total = summary.get("totalTestCount")
+          print(f"Tests: {summary.get('passedTests')} passed, {summary.get('failedTests')} failed, "
+                f"{summary.get('skippedTests')} skipped, {total} in all ({summary.get('result')})")
+          if total is None:
+              print("::warning::The test summary has no totalTestCount; its keys are:", sorted(summary))
+          elif total == 0:
+              print("::error::No tests ran.")
+              sys.exit(1)
+          PY
+
+      - name: Check the String Catalog
+        run: scripts/check-strings.sh build/DerivedData
+
+      - name: Show test failures
+        if: failure()
+        run: |
+          [ -d build/TestResults.xcresult ] || exit 0
+          xcrun xcresulttool get test-results tests --path build/TestResults.xcresult --compact \
+            | python3 -c '
+          import json, sys
+          def walk(node, path):
+              name = node.get("name", "")
+              if node.get("nodeType") == "Failure Message":
+                  print("FAIL", " / ".join(path), "::", name)
+              for child in node.get("children", []):
+                  walk(child, path + [name] if node.get("nodeType") in ("Test Case", "Test Suite") else path)
+          for root in json.load(sys.stdin).get("testNodes", []):
+              walk(root, [])
+          '
+
+      - name: Archive Release (arm64, as the release workflow does)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project Elenath.xcodeproj -scheme Elenath -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            -archivePath build/Elenath.xcarchive \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            2>&1 | tee build/release.log
+          app=build/Elenath.xcarchive/Products/Applications/Elenath.app
+          archs=$(lipo -archs "$app/Contents/MacOS/Elenath")
+          echo "Architectures: $archs"
+          [[ "$archs" == "arm64" ]]
+          codesign --verify --deep --strict --verbose=2 "$app"
+          scripts/check-rules.sh "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" build/Elenath.zip
+          ls -l build/Elenath.zip
+
+      - name: Check for warnings
+        run: scripts/check-warnings.sh build/test.log build/release.log
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: |
+            build/TestResults.xcresult
+            build/*.log
+          if-no-files-found: ignore
+
+  next-macos:
+    # Not a gate: it shows early what the next macOS and Xcode will say about the code. It may fail without
+    # failing the run. When the app moves to macOS 27, this job and the gate swap places (see CLAUDE.md).
+    name: Build and test on macOS 27 (may fail)
+    runs-on: xcode-27
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      XCODE_MAJOR: "27"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+          xcodebuild -version
+          sw_vers
+
+      - name: Test (Debug)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild test \
+            -project Elenath.xcodeproj -scheme Elenath -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            2>&1 | tee build/test.log
+          echo "Test cases passed: $(grep -cE "^Test case .* passed" build/test.log || true)"
+
+      - name: Build Release
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Elenath.xcodeproj -scheme Elenath -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+            2>&1 | tee build/release.log
+
+      - name: Warnings from the newer toolchain
+        if: always()
+        run: |
+          warnings=$(grep -hE '(^|: )warning: ' build/*.log 2> /dev/null | sort -u || true)
+          {
+            echo "### Warnings with Xcode ${XCODE_MAJOR}"
+            echo
+            if [[ -n "$warnings" ]]; then
+              echo '```'
+              echo "$warnings"
+              echo '```'
+            else
+              echo "None."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

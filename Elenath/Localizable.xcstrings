@@ -1,0 +1,39 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "All the stars together." : {
+      "comment" : "The meaning of the name Elenath, shown under it in the sidebar"
+    },
+    "Appearance" : {
+      "comment" : "Settings section title"
+    },
+    "Check for Updates…" : {
+      "comment" : "Help menu: opens the releases page on GitHub in the browser"
+    },
+    "Dawn" : {
+      "comment" : "The light appearance"
+    },
+    "Elenath on GitHub" : {
+      "comment" : "Help menu: opens the project page in the browser"
+    },
+    "General" : {
+      "comment" : "Settings tab"
+    },
+    "Match System" : {
+      "comment" : "Appearance choice: follow macOS"
+    },
+    "Night" : {
+      "comment" : "The dark appearance"
+    },
+    "Nothing here yet." : {
+      "comment" : "Headline of the empty main window"
+    },
+    "Report an Issue…" : {
+      "comment" : "Help menu: opens the new-issue page on GitHub in the browser"
+    },
+    "This early build only shows Elenath’s window. Notes arrive in version 0.1." : {
+      "comment" : "Under the empty main window's headline"
+    }
+  },
+  "version" : "1.0"
+}

@@ -1,0 +1,23 @@
+# Xcode
+xcuserdata/
+DerivedData/
+build/
+*.xcscmblueprint
+*.xccheckout
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Secrets
+*.p12
+*.cer
+*.mobileprovision
+.env
+
+# Build output
+*.xcresult
+*.zip
+
+# Never commit real notes or design references (see CLAUDE.md)
+design-reference/

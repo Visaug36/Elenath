@@ -19,6 +19,8 @@ struct MainView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .starryBackground(.backgroundWindow)
+            // No toolbar items yet, so the stars run up under the title bar instead of a bare toolbar band.
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .navigationTitle(Text(verbatim: "Elenath"))
         }
         .frame(minWidth: Metrics.windowMinimumWidth, minHeight: Metrics.windowMinimumHeight)

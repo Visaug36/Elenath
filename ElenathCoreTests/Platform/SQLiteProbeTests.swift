@@ -33,10 +33,7 @@ struct SQLiteProbeTests {
     @Test func theLibraryIsRecentEnough() {
         // 3.43 has everything the index uses: FTS5 with the trigram tokenizer (3.34) and
         // contentless-delete tables (3.43).
-        let version = sqlite3_libversion_number()
-        // Shown in the CI log, so a change of the system library is easy to spot.
-        print("ELENATH-PROBE sqlite \(String(cString: sqlite3_libversion()))")
-        #expect(version >= 3_043_000)
+        #expect(sqlite3_libversion_number() >= 3_043_000)
     }
 }
 

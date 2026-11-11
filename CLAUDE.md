@@ -178,6 +178,22 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Phase 1 as built (2026-11-11):**
+  - **Project layout:** as Ithil's. `Elenath.xcodeproj` (objectVersion 77, file-system-synchronized folders, so new files need no project edit), targets `Elenath`, `ElenathCore` (static framework) and `ElenathCoreTests` (Swift Testing, not hosted). Swift 6 language mode, macOS 26.0, `ARCHS = arm64`, ad-hoc signing, sandbox and hardened runtime, entitlements in `Config/Elenath.entitlements`.
+  - **Color tokens:** Ithil's names and values. `Subject{Clay,Teal,Iris,Fern,Rose}` became `Space…`.
+  - **CI:** two jobs, both green from the first run, about two minutes each. The gate runs on `macos-26` with Xcode 26.6 (macOS 26.7.2): the project's rules, lint, tests, a test count from the xcresult (a run with no tests fails), the String Catalog check, an arm64 Release archive and zero warnings. The second job runs on `xcode-27` with Xcode 27.2 (macOS 27.0.1) and may fail without failing the run.
+  - **Rules as checks:** `scripts/check-rules.sh` fails on a Swift package, on a UI import in `ElenathCore`, and on any entitlement beyond the sandbox, app-scope bookmarks and user-selected files, in the project and in the archived app.
+  - **Platform facts from CI:** the system SQLite on macOS 26 and 27 has FTS5 and the trigram tokenizer (`SQLiteProbeTests`).
+  - **Screenshots:** the Screenshots workflow commits `docs/images/window-*.png` to the branch it ran on, so pull before pushing after a run. With no toolbar items, a window needs `.toolbarBackground(.hidden, for: .windowToolbar)` or macOS 26 draws a bare toolbar band.
+  - **Release workflow:** on a push to `main` it publishes `MARKETING_VERSION` when CHANGELOG has a dated section for it and no release holds the zip yet, creating the tag itself with `gh release create --target`. Versions below 1.0.0 are prereleases. From 1.0.0 it only publishes when run by hand with "publish" typed in, or to complete a release the user made on the Releases page. Its first real run is 0.0.1, after Phase 1 is merged.
+- **Local checks (2026-11-11):** `ElenathCore` and its tests build and run on Linux with the open-source toolchain, so most logic is checked in seconds without CI. `scripts/dev/bootstrap-swift.sh` installs Swift 6.3.3 (the compiler in Xcode 26.6), and `scripts/dev/core-test.sh` lints everything and runs the core tests. Only the app layer needs CI to compile. To keep this working, Apple-only calls in `ElenathCore` sit behind `#if canImport` or a protocol (docs/ARCHITECTURE.md).
+- **Defaults Claude chose while writing the docs (2026-11-11), shown to the user to confirm or change:**
+  - Notes Elenath creates start with front matter (`id`, `created`). Notes from elsewhere stay untouched until first edited in Elenath.
+  - A note's title is its file name. A new top-level folder made in Finder becomes an unsealed space. A `space.json` that can't be read or restored makes the space sealed until the user decides.
+  - Today and other "everywhere" views read no sealed space; a sealed space has its own page. Inbox items are found only in the Inbox.
+  - Links take the color of the space they point to and are underlined, since amber is reserved. Markdown markers stay visible and dimmed. Note text is 15 pt. The editor is an `NSTextView` on TextKit 1.
+- **Icon (2026-11-11):** three options are in `docs/icon/` (A: open notebook under the Plough; B: the constellation fills the sky; C: Ithil's arched window with a star). Claude recommends A. `scripts/icon/make-appicon.sh` renders the chosen master into the AppIcon set.
+- **Cloud environment (2026-11-11):** the user's Default environment has unrestricted network access and no setup script. It is left as it is; the Swift toolchain is installed per session with the bootstrap script.
 - **Phase 1 plan (2026-11-10):** shown with the start-up questions. The user answered the questions and raised no objection, which is taken as the OK. Nothing reaches `main` before the icon pick, so the user can still object. The plan's choices:
   - CI gates on `macos-26` with the newest Xcode 26.x there (26.6), because tests and screenshots then run on the macOS generation the user's Mac has. A second job builds and tests on `xcode-27` and may fail without blocking a merge. Switch the two when the user moves to macOS 27.
   - After Phase 1 is merged, a 0.0.1 prerelease of the empty window proves that the release workflow can create the tag itself.
@@ -205,14 +221,17 @@ Keep this section current. Newest first.
 - **Ithil (user, 2026-11-10):** Elenath looks like Ithil, and Nano bot can read Ithil's data.
 
 ### Open items
-- Waiting for the user: the icon pick (three options, Phase 1).
-- To ask with the Phase 2 product questions: which other languages besides English, and which apps hold the notes on the phone and the other laptop (for docs/IMPORT.md).
+- Waiting for the user: the icon pick (A, B or C). Phase 1 is merged after it.
+- Asked on 2026-11-11, needed for Phase 2: which other languages besides English; which apps hold the notes on the phone and the other laptop; and how WhatsApp is used for notes (a chat with oneself or many chats, whole chats or only the user's own messages).
+- Waiting for the user's yes or no on the defaults listed under Decisions.
+- The Liquid Glass app icon for macOS 26 (an Icon Composer `.icon` file) is not planned; the AppIcon set is used, as in Ithil.
 - Not verified (the page is blocked here): whether GitHub has declared the `xcode-27` image generally available.
 - The languages I write in, and whether the embedder and the model cover them.
 - The seven places my notes live today.
 - Needs a check on a real Mac (CI can't do it): Does the on-device model answer from the sandboxed, ad-hoc-signed app? Do the embedding assets arrive without a network entitlement? Do the folder bookmarks survive an update to a new ad-hoc-signed build?
 
 ### Status
+- 2026-11-11: **Phase 1 built, waiting for the icon pick.** The project, tokens, the empty themed window, CI, the Screenshots and Release workflows, scripts and community files are on `claude/new-session-fplgmb`, with docs/DESIGN.md, docs/FORMAT.md and docs/ARCHITECTURE.md for version 0.1. CI is green on both jobs (12 tests, zero warnings). An independent review was run. What is left: wire the picked icon in, date the 0.0.1 changelog section, merge, and check that the Release workflow publishes 0.0.1.
 - 2026-11-10: **start-up done, waiting for the user.** The brief is saved as CLAUDE.md on `claude/new-session-fplgmb`. Ithil was read: its CLAUDE.md, docs, the Xcode project, Config, scripts, workflows, and the storage, folder access, hotkey, appearance and onboarding code. The repo is public and has no license yet. Nothing is built.
   - Runners on 2026-11-10 (from `actions/runner-images`): `macos-26` (also `macos-latest`) is macOS 26.7.2 on arm64 with Xcode 26.0.1 to 26.6; 26.6 is the default and its SDK is macOS 26.5. `xcode-27` is macOS 27.0.1 with Xcode 27.0, 27.1 (the default) and 27.2, and the README still marks that image as a preview. `macos-15` has Xcode 16.x and 26.0.1 to 26.3. The macOS 14 images were retired on 2026-11-02.
 - 2026-11-10: brief written. Nothing built yet.

@@ -32,6 +32,8 @@ jobs:
           sudo xcode-select --switch "$xcode/Contents/Developer"
           xcodebuild -version
           sw_vers
+          # The system's SQLite, which the index is built on.
+          /usr/bin/sqlite3 -version
 
       - name: Check the project's rules
         run: scripts/check-rules.sh
@@ -58,9 +60,28 @@ jobs:
             -resultBundlePath build/TestResults.xcresult \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             2>&1 | tee build/test.log
-          grep -E "Test run with|tests? (passed|failed)|Executed [0-9]+ test|ELENATH-PROBE" build/test.log || true
           echo "Files changed by the build (e.g. String Catalog sync):"
           git status --porcelain
+
+      - name: Count the tests
+        # A run that quietly executes no tests must not pass.
+        run: |
+          set -euo pipefail
+          xcrun xcresulttool get test-results summary --path build/TestResults.xcresult --compact > build/test-summary.json
+          python3 - build/test-summary.json <<'PY'
+          import json
+          import sys
+
+          summary = json.load(open(sys.argv[1]))
+          total = summary.get("totalTestCount")
+          print(f"Tests: {summary.get('passedTests')} passed, {summary.get('failedTests')} failed, "
+                f"{summary.get('skippedTests')} skipped, {total} in all ({summary.get('result')})")
+          if total is None:
+              print("::warning::The test summary has no totalTestCount; its keys are:", sorted(summary))
+          elif total == 0:
+              print("::error::No tests ran.")
+              sys.exit(1)
+          PY
 
       - name: Check the String Catalog
         run: scripts/check-strings.sh build/DerivedData
@@ -144,7 +165,7 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath build/DerivedData \
             2>&1 | tee build/test.log
-          grep -E "Test run with|tests? (passed|failed)|Executed [0-9]+ test|ELENATH-PROBE" build/test.log || true
+          echo "Test cases passed: $(grep -cE "^Test case .* passed" build/test.log || true)"
 
       - name: Build Release
         run: |

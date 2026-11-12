@@ -260,6 +260,15 @@ public actor Retrieval {
         return hits
     }
 
+    /// The folders of a space or of the Inbox, by path, for a workplace that may read it. Nothing for
+    /// any other: a sealed space's folder names stay inside it.
+    public func folders(of container: Container, from workplace: Workplace) async throws -> [ItemPath] {
+        for index in try await readable(from: workplace) where index.container == container {
+            return try index.folders()
+        }
+        return []
+    }
+
     public func recentNotes(from workplace: Workplace, limit: Int) async throws -> [NoteHit] {
         var hits: [NoteHit] = []
         for index in try await readable(from: workplace) {

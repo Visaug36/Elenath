@@ -115,6 +115,7 @@ struct SealingLeakTests {
                 found += [task.text, task.note.title, task.note.preview]
             }
             for container in containers {
+                found += try await retrieval.folders(of: container, from: workplace).map(\.description)
                 for marker in markers {
                     for note in [
                         roster(marker, in: container),

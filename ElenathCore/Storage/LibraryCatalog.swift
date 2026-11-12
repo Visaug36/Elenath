@@ -125,8 +125,8 @@ public actor LibraryCatalog {
 
     /// Writes a brand-new library into an empty folder: library.json and the Inbox. Refuses (throws) when
     /// the folder already holds a library.
-    public func create() async throws -> LibrarySnapshot {
-        let document = LibraryDocument()
+    public func create(id: LibraryID = LibraryID()) async throws -> LibrarySnapshot {
+        let document = LibraryDocument(id: id)
         try await libraryStore.create(document)
         library = document
         isReadOnly = false
@@ -195,14 +195,15 @@ public actor LibraryCatalog {
         symbol: String = Space.fallbackSymbol,
         sealed: Bool = false,
         description: String = "",
-        keywords: [String] = []
+        keywords: [String] = [],
+        id: SpaceID = SpaceID()
     ) async throws -> Space {
         var library = try editableLibrary()
         let folderName = try freeSpaceName(name)
         let folder = root.appending(component: folderName, directoryHint: .isDirectory)
         guard PathContainment.isStrictlyInside(folder, folder: root) else { throw LibraryCatalogError.outsideLibrary }
         let document = SpaceDocument(
-            color: color, symbol: symbol, sealed: sealed, description: description, keywords: keywords)
+            id: id, color: color, symbol: symbol, sealed: sealed, description: description, keywords: keywords)
         try fileSystem.createDirectory(at: folder)
         let store = makeSpaceStore(folder: folder, knownID: document.id, libraryID: library.id)
         try await store.create(document)

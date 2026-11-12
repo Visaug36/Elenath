@@ -15,6 +15,13 @@ public struct LibraryChange: Hashable, Sendable {
     public var isEmpty: Bool {
         !reloadsCatalog && containers.isEmpty && notes.isEmpty
     }
+
+    /// Adds what another batch found.
+    public mutating func merge(_ other: LibraryChange) {
+        reloadsCatalog = reloadsCatalog || other.reloadsCatalog
+        containers.formUnion(other.containers)
+        notes.formUnion(other.notes)
+    }
 }
 
 /// Sorts the paths a folder watcher reports by what they mean (docs/ARCHITECTURE.md, "The watcher"), so

@@ -282,6 +282,19 @@ public actor LibraryCatalog {
         return trashed
     }
 
+    /// Puts a space's folder back from the Trash: the undo of `trashSpace`. If its name is taken by now
+    /// it gets a number. Open the library again afterwards to see it.
+    public func restoreSpace(from trashed: URL, named name: String) throws {
+        _ = try editableLibrary()
+        guard fileSystem.isDirectory(at: trashed) else { throw LibraryCatalogError.unknownSpace }
+        let taken = Set(
+            ((try? fileSystem.contentsOfDirectory(at: root)) ?? []).map { NameSanitizer.key($0.lastPathComponent) })
+        let folderName = UniqueName.available(name) { taken.contains(NameSanitizer.key($0)) }
+        let folder = root.appending(component: folderName, directoryHint: .isDirectory)
+        guard PathContainment.isStrictlyInside(folder, folder: root) else { throw LibraryCatalogError.outsideLibrary }
+        try fileSystem.moveItem(at: trashed, to: folder)
+    }
+
     // MARK: - Folders
 
     /// Whether nothing may be changed in a container: the library, or the space, was written by a newer

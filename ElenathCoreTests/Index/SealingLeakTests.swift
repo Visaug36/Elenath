@@ -103,6 +103,10 @@ struct SealingLeakTests {
                 add(try await retrieval.titles(matching: text, from: workplace, limit: 200))
             }
             add(try await retrieval.recentNotes(from: workplace, limit: 200))
+            for name in ["Red Cross", "Uni", "Inbox"] + markers.map({ "\($0) drills" }) {
+                found += try await retrieval.notesLinking(throughFolderNamed: name, from: workplace).map(
+                    \.path.description)
+            }
             for tag in try await retrieval.tags(from: workplace) {
                 found.append(tag.tag)
                 add(try await retrieval.notes(tagged: tag.tag, from: workplace))

@@ -116,6 +116,22 @@ public struct LinkContext: Sendable {
     public func moving(_ old: NoteRef, to new: NoteRef) -> LinkContext {
         LinkContext(catalog: catalog.replacing(old, with: new), spaceNames: spaceNames)
     }
+
+    /// The context once a note has left it: moved to where these links can't reach, or deleted.
+    public func removing(_ note: NoteRef) -> LinkContext {
+        var copy = self
+        copy.catalog.remove(note)
+        return copy
+    }
+
+    /// The context once a space has another name, for links written as `[[Space/Title]]`.
+    public func renaming(_ space: SpaceID, to name: String) -> LinkContext {
+        var copy = self
+        if copy.spaceNames[space] != nil {
+            copy.spaceNames[space] = name
+        }
+        return copy
+    }
 }
 
 /// The only way to read the index, and the choke point of sealing (docs/ARCHITECTURE.md).
@@ -377,6 +393,18 @@ public actor Retrieval {
                         source: Retrieval.hit(row.source, in: index.container),
                         range: NSRange(location: row.link.location, length: row.link.length),
                         context: row.link.context))
+            }
+        }
+        return result
+    }
+
+    /// The notes with a link whose target starts with a folder or space name, as `[[Uni/Reading list]]`
+    /// starts with "Uni": the ones to look at when that folder or space is renamed.
+    public func notesLinking(throughFolderNamed name: String, from workplace: Workplace) async throws -> [NoteRef] {
+        var result: [NoteRef] = []
+        for index in try await readable(from: workplace) {
+            result += try index.noteLinking(throughFolderNamed: name).map {
+                NoteRef(container: index.container, path: $0)
             }
         }
         return result

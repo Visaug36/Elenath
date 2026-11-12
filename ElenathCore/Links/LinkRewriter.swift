@@ -34,16 +34,25 @@ public enum LinkRewriter {
         forMoving old: NoteRef, to new: NoteRef, notes: [(note: NoteRef, body: String)], before: LinkResolver,
         after: LinkResolver
     ) -> [LinkEdit] {
+        edits(forMoving: [old: new], notes: notes, before: before, after: after)
+    }
+
+    /// The same for several notes that move at once, as when a folder is renamed: `moves` maps where
+    /// each note was to where it is.
+    public static func edits(
+        forMoving moves: [NoteRef: NoteRef], notes: [(note: NoteRef, body: String)], before: LinkResolver,
+        after: LinkResolver
+    ) -> [LinkEdit] {
         var edits: [LinkEdit] = []
         for (note, body) in notes {
-            let noteAfter = note == old ? new : note
+            let noteAfter = moves[note] ?? note
             for span in MarkdownScanner.scan(body).links {
                 switch span.target {
                 case .wiki(let link):
                     guard !link.target.isEmpty, case .resolved(let target) = before.resolve(link, from: note) else {
                         continue
                     }
-                    let targetAfter = target == old ? new : target
+                    let targetAfter = moves[target] ?? target
                     if after.resolve(link, from: noteAfter) == .resolved(targetAfter) {
                         continue
                     }
@@ -55,7 +64,7 @@ public enum LinkRewriter {
                     guard let range = span.destinationRange,
                         case .resolved(let target) = before.resolve(markdownDestination: destination, from: note)
                     else { continue }
-                    let targetAfter = target == old ? new : target
+                    let targetAfter = moves[target] ?? target
                     if after.resolve(markdownDestination: destination, from: noteAfter) == .resolved(targetAfter) {
                         continue
                     }

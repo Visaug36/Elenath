@@ -229,3 +229,43 @@ struct LinkRewriterTests {
         #expect(result[top] == "[[Lecture 7]] was ambiguous, [[Lecture 8]] unresolved")
     }
 }
+
+@Suite("Link rewriting for folders and spaces")
+struct LinkRewriterBatchTests {
+    typealias Fixture = LinkResolverTests
+
+    @Test("Renaming a folder keeps the links that name it")
+    func folderRename() {
+        let catalog = TitleCatalog(notes: Fixture.notes)
+        let moves: [NoteRef: NoteRef] = [
+            Fixture.note(Fixture.uni, "Maths/Lecture 7.md"): Fixture.note(Fixture.uni, "Algebra/Lecture 7.md"),
+            Fixture.note(Fixture.uni, "Maths/Proofs.markdown"): Fixture.note(Fixture.uni, "Algebra/Proofs.markdown"),
+            Fixture.note(Fixture.uni, "Maths/Old/Summary.md"): Fixture.note(Fixture.uni, "Algebra/Old/Summary.md"),
+        ]
+        var afterCatalog = catalog
+        for (old, new) in moves {
+            afterCatalog = afterCatalog.replacing(old, with: new)
+        }
+        let top = Fixture.note(Fixture.uni, "Reading list.md")
+        let body = "[[Maths/Lecture 7]] [[Proofs]] [[Maths/Old/Summary|old]] [[Physics/Lecture 7]]"
+        let edits = LinkRewriter.edits(
+            forMoving: moves, notes: [(top, body)], before: LinkResolver(catalog: catalog, spaceNames: Fixture.names),
+            after: LinkResolver(catalog: afterCatalog, spaceNames: Fixture.names))
+        #expect(
+            LinkRewriter.apply(edits, to: body)
+                == "[[Algebra/Lecture 7]] [[Proofs]] [[Old/Summary|old]] [[Physics/Lecture 7]]")
+    }
+
+    @Test("Renaming a space keeps the links written with its name")
+    func spaceRename() {
+        let catalog = TitleCatalog(notes: Fixture.notes)
+        let before = LinkResolver(catalog: catalog, spaceNames: Fixture.names)
+        let after = LinkResolver(catalog: catalog, spaceNames: [Fixture.uni: "University", Fixture.ideas: "Ideas"])
+        let source = Fixture.note(Fixture.ideas, "App idea.md")
+        let body = "[[Uni/Summary]] [[Uni/Maths/Lecture 7#Part|that]] [[Reading list]]"
+        let edits = LinkRewriter.edits(forMoving: [:], notes: [(source, body)], before: before, after: after)
+        #expect(
+            LinkRewriter.apply(edits, to: body)
+                == "[[University/Summary]] [[University/Maths/Lecture 7#Part|that]] [[Reading list]]")
+    }
+}

@@ -587,6 +587,28 @@ final class SpaceIndex {
         }
     }
 
+    /// The notes with a wiki link whose target has `name` as one of its folder parts.
+    func noteLinking(throughFolderNamed name: String) throws -> [ItemPath] {
+        let key = NameSanitizer.key(name)
+        let rows = try database.query(
+            """
+            SELECT DISTINCT n.path, l.target FROM links l JOIN notes n ON n.id = l.source
+            WHERE l.is_markdown = 0 AND instr(l.target, '/') > 0
+            """
+        ) { (ItemPath($0.string(0)), $0.string(1)) }
+        var seen = Set<ItemPath>()
+        var result: [ItemPath] = []
+        for (path, target) in rows {
+            guard let path, !seen.contains(path) else { continue }
+            let folders = target.split(separator: "/").dropLast()
+            if folders.contains(where: { NameSanitizer.key($0.trimmingCharacters(in: .whitespaces)) == key }) {
+                seen.insert(path)
+                result.append(path)
+            }
+        }
+        return result
+    }
+
     /// Every tag as first written, with how many notes have it.
     func tagCounts() throws -> [(key: String, tag: String, count: Int)] {
         try database.query(

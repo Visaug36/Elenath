@@ -53,6 +53,24 @@ struct LibraryFixture {
         folder.remove()
     }
 
+    /// An indexer over this library, as the app would make it.
+    func indexer() -> Indexer {
+        Indexer(
+            catalog: catalog, indexDirectory: indexDirectory, fileSystem: fileSystem,
+            timeZone: { LibraryFixture.timeZone })
+    }
+
+    /// A retrieval over this library's index. It asks the catalog for the spaces at every query.
+    func retrieval() -> Retrieval {
+        let catalog = catalog
+        return Retrieval(indexDirectory: indexDirectory, spaces: { await catalog.spaces() })
+    }
+
+    /// Sets a file's modification date, so tests don't depend on how fast they run.
+    func setModified(_ date: Date, of path: String) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url(path).path)
+    }
+
     func space(_ name: String, sealed: Bool = false, keywords: [String] = []) async throws -> Space {
         try await catalog.createSpace(named: name, sealed: sealed, keywords: keywords)
     }

@@ -283,6 +283,20 @@ public actor LibraryCatalog {
 
     // MARK: - Folders
 
+    /// Whether nothing may be changed in a container: the library, or the space, was written by a newer
+    /// Elenath. A space that doesn't exist is read-only too.
+    public func isReadOnly(_ container: Container) -> Bool {
+        if isReadOnly || library == nil {
+            return true
+        }
+        switch container {
+        case .inbox:
+            return false
+        case .space(let id):
+            return entries[id]?.space.isReadOnly ?? true
+        }
+    }
+
     /// The folder of a space or of the Inbox.
     public func folderURL(of container: Container) throws -> URL {
         switch container {

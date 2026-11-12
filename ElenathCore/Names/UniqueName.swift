@@ -8,14 +8,20 @@ public enum UniqueName {
 
     /// `name` if `isTaken` says it is free, otherwise the first numbered variant that is.
     ///
-    /// A name that already ends in a Finder number continues from it: "Notes 2.md" becomes "Notes 3.md",
-    /// not "Notes 2 2.md". Names are offered to `isTaken` exactly as they would be created, so the caller
+    /// A name that is itself a numbered copy continues from its number: with "Notes.md" and "Notes 2.md"
+    /// there, "Notes 2.md" becomes "Notes 3.md". A name that merely ends in a number does not: when
+    /// "Lecture 7.md" is taken and there is no "Lecture.md", the result is "Lecture 7 2.md", never
+    /// "Lecture 8.md". Names are offered to `isTaken` exactly as they would be created, so the caller
     /// decides how names compare (see `NameSanitizer.key`).
     public static func available(_ name: String, isTaken: (String) -> Bool) -> String {
         if !isTaken(name) {
             return name
         }
-        let parts = NumberedName(name)
+        var parts = NumberedName(name)
+        if let number = parts.number, !isTaken(parts.unnumberedName) {
+            parts.base += " \(number)"
+            parts.number = nil
+        }
         let first = (parts.number ?? 1) + 1
         for number in first..<(first + 10_000) {
             let candidate = parts.name(withSuffix: String(number))
@@ -60,6 +66,11 @@ struct NumberedName {
         self.base = stem
         self.number = number
         self.pathExtension = pathExtension
+    }
+
+    /// The name without its number: "Notes 2.md" gives "Notes.md".
+    var unnumberedName: String {
+        pathExtension.map { "\(base).\($0)" } ?? base
     }
 
     /// "base suffix.extension", with the base shortened if the name would be too long for a volume.

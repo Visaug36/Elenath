@@ -16,9 +16,17 @@ struct UniqueNameTests {
         #expect(available("Physics", taken: ["Physics"]) == "Physics 2")
     }
 
-    @Test func aNumberedNameContinuesFromItsNumber() {
-        #expect(available("Notes 2.md", taken: ["Notes 2.md"]) == "Notes 3.md")
-        #expect(available("Notes 9.md", taken: ["Notes 9.md", "Notes 10.md"]) == "Notes 11.md")
+    @Test func aNumberedCopyContinuesFromItsNumber() {
+        #expect(available("Notes 2.md", taken: ["Notes.md", "Notes 2.md"]) == "Notes 3.md")
+        #expect(available("Notes 9.md", taken: ["Notes.md", "Notes 9.md", "Notes 10.md"]) == "Notes 11.md")
+    }
+
+    @Test func aTitleThatEndsInANumberIsNotACopy() {
+        // A second "Lecture 7" must never be called "Lecture 8".
+        #expect(available("Lecture 7.md", taken: ["Lecture 7.md"]) == "Lecture 7 2.md")
+        #expect(available("Lecture 7.md", taken: ["Lecture 7.md", "Lecture 7 2.md"]) == "Lecture 7 3.md")
+        #expect(available("Lecture 7.md", taken: ["Lecture 7.md", "Lecture 8.md"]) == "Lecture 7 2.md")
+        #expect(available("Week 12", taken: ["Week 12"]) == "Week 12 2")
     }
 
     @Test func yearsAndLeadingZerosAreNotFinderNumbers() {

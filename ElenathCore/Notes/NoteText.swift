@@ -119,6 +119,11 @@ public struct NoteText: Hashable, Sendable {
         frontMatter?.id
     }
 
+    /// Whether the note has no `id` key at all, so its first edit should give it one.
+    public var needsIdentity: Bool {
+        frontMatter?.hasKey("id") != true
+    }
+
     /// Gives the note an `id`, and a `created` date if it has none: what the first edit of a note that
     /// came from elsewhere does. A note that has an id keeps it, and so does a note whose `id` is
     /// something other than a UUID (another tool's id is never overwritten). Returns whether anything

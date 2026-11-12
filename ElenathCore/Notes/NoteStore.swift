@@ -167,6 +167,55 @@ public actor NoteStore {
         return try write(text, to: try await noteURL(ref), as: ref)
     }
 
+    // MARK: - Importing
+
+    /// Copies a Markdown or text file from outside the library in as a note called `title`. The bytes are
+    /// unchanged when the file is UTF-8, and the copy keeps the file's dates. Text in another encoding is
+    /// read as well as it can be and written as UTF-8. The original is never moved or changed.
+    public func importNote(
+        from source: URL, title: String, in folder: ItemPath, container: Container
+    ) async throws -> NoteRef {
+        let folderURL = try await writableFolderURL(folder, in: container)
+        try fileSystem.createDirectory(at: folderURL)
+        let keepsExtension = source.pathExtension.lowercased() == "markdown"
+        let name = availableNoteName(
+            for: NameSanitizer.sanitizedTitle(title) + (keepsExtension ? ".markdown" : ".md"), in: folderURL)
+        guard let path = folder.appending(name) else { throw NoteStoreError.notANote }
+        let ref = NoteRef(container: container, path: path)
+        let destination = try await noteURL(ref)
+        let data = try fileSystem.readData(at: source)
+        if (try? NoteText(data: data)) != nil {
+            try fileSystem.copyItem(at: source, to: destination)
+        } else {
+            try fileSystem.writeAtomically(Data(NoteStore.decodedLeniently(data).utf8), to: destination)
+        }
+        return ref
+    }
+
+    /// Copies files or folders from outside the library into a folder, as they are. Names that are taken
+    /// get a number. Returns where the copies are, in the order of `sources`.
+    public func importFiles(
+        _ sources: [URL], into folder: ItemPath, container: Container,
+        progress: @escaping @Sendable (FileCopyProgress) -> Void = { _ in }
+    ) async throws -> [ItemPath] {
+        let folderURL = try await writableFolderURL(folder, in: container)
+        try fileSystem.createDirectory(at: folderURL)
+        let copies = try await FileCopier.copy(
+            sources, into: folderURL, root: catalog.root, fileSystem: fileSystem, progress: progress)
+        return copies.compactMap { folder.appending($0.lastPathComponent) }
+    }
+
+    /// Text that isn't UTF-8, read as UTF-16 when it starts with that encoding's mark and as Windows
+    /// Latin otherwise, which gives every byte a character.
+    static func decodedLeniently(_ data: Data) -> String {
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]),
+            let text = String(data: data, encoding: .utf16)
+        {
+            return text
+        }
+        return String(data: data, encoding: .windowsCP1252) ?? String(decoding: data, as: UTF8.self)
+    }
+
     // MARK: - Renaming, moving, deleting
 
     /// Renames a note's file. The title is made safe as a name; one that another item has is refused.

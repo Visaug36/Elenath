@@ -149,6 +149,10 @@ struct SealingLeakTests {
                     found.append(backlink.source.note.path.description)
                 }
                 found += try await retrieval.linkingNotes(to: note).map(\.path.description)
+                // As if the note had been renamed in Finder: the notes that linked to it.
+                let renamed = NoteRef(container: container, path: ItemPath("Renamed \(marker).md")!)
+                found += try await retrieval.linkingNotes(toMoved: [NoteMove(from: note, to: renamed)]).map(
+                    \.path.description)
                 found += try await retrieval.attachmentNamesShared(by: note)
                 if let hit = try await retrieval.note(note) {
                     found += [hit.title, hit.preview]

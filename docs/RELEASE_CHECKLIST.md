@@ -26,7 +26,27 @@ This list grows with the app: each phase adds its own section.
 - [ ] Full keyboard access (System Settings → Keyboard → Keyboard navigation): everything is reachable.
 - [ ] Reduce Motion and Increase Contrast are respected.
 
-## 3. Only a real Mac can tell
+## 3. Notes (from 0.1)
+
+- [ ] First launch: onboarding, choosing a folder (an empty one, and one that already holds Markdown files),
+      and the first spaces.
+- [ ] Quit and open again: the library opens by itself, quickly.
+- [ ] ⌥⇧Space in another app opens Quick Capture; ↩ saves to the Inbox, ⌘↩ saves and opens, "uni: …" files
+      it in Uni, esc closes. Changing the shortcut in Settings works, and ⌥Space still belongs to Ithil.
+- [ ] Typing in a long note doesn't stutter. Headings, lists, quotes, code, tables, task boxes, links and tags
+      are styled as you type; ⌘-click follows a link; `[[` completes titles; ticking a box changes the file.
+- [ ] Dropping a picture or a PDF on a note copies it into `Attachments` and shows it under its line.
+- [ ] A note edited in TextEdit while Elenath shows it updates in Elenath. Editing the same note in both before
+      Elenath saves keeps both versions, with a banner.
+- [ ] Renaming or moving a note rewrites the links to it; ⌘Z puts everything back. A note renamed in Finder
+      keeps its links.
+- [ ] Moving a note to the Trash, and ⌘Z.
+- [ ] Import: a folder of Markdown files, a Word document, a PDF, and a WhatsApp chat export (unzipped first).
+- [ ] A sealed space: its notes, tags and tasks never show up in search, Today or link completion from outside
+      it, and other spaces' don't show up inside it.
+- [ ] Settings → Files: Rebuild Index, and moving the library to another folder.
+
+## 4. Only a real Mac can tell
 
 These are open questions from the brief. Version 0.1 has a diagnostics report (Settings → Files) that checks
 them and can be copied.

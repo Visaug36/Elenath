@@ -331,6 +331,73 @@ struct IndexTests {
         #expect(try await retrieval.backlinks(to: idea).isEmpty)
     }
 
+    @Test("After a rename in Finder, the notes that linked to the note are found, and their links repaired")
+    func linksToANoteMovedOutside() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let fixture = library.fixture
+        let retrieval = library.retrieval
+        let uni = library.uni
+        let lecture7 = fixture.ref(uni, "Physics/Lecture 7.md")
+        let idea = fixture.ref(library.ideas, "App idea.md")
+        let old = fixture.ref(uni, "Reading list.md")
+        let new = fixture.ref(uni, "Books/To read.md")
+        try FileManager.default.createDirectory(at: fixture.url("Uni/Books"), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(
+            at: fixture.url("Uni/Reading list.md"), to: fixture.url("Uni/Books/To read.md"))
+        let report = try await library.indexer.refresh(.space(uni.id))
+        #expect(report.moved == [NoteMove(from: old, to: new)])
+
+        // The links no longer reach the note, so its backlinks can't find them; judged as they were, they can.
+        #expect(try await retrieval.linkingNotes(to: new).isEmpty)
+        let linking = try await retrieval.linkingNotes(toMoved: report.moved)
+        #expect(Set(linking) == [lecture7, idea])
+
+        // Repaired as the app repairs them, the links reach the note again.
+        func file(_ note: NoteRef) -> String {
+            (note.container == .space(uni.id) ? "Uni/" : "Ideas/") + note.path.description
+        }
+        let after = try await retrieval.linkContext(for: .space(uni.id))
+        let before = after.moving(new, to: old)
+        var texts: [NoteRef: NoteText] = [:]
+        for note in linking {
+            texts[note] = try NoteText(data: Data(try fixture.read(file(note)).utf8))
+        }
+        let edits = LinkRewriter.edits(
+            forMoving: [old: new], notes: linking.map { ($0, texts[$0]!.body) }, before: before.resolver,
+            after: after.resolver)
+        for (note, noteEdits) in Dictionary(grouping: edits, by: \.note) {
+            var text = try #require(texts[note])
+            text.body = LinkRewriter.apply(noteEdits, to: text.body)
+            try text.data().write(to: fixture.url(file(note)))
+        }
+        await library.indexer.refreshAll()
+        #expect(Set(try await retrieval.linkingNotes(to: new)) == [lecture7, idea])
+        #expect(try await retrieval.linkingNotes(toMoved: report.moved).isEmpty)
+    }
+
+    @Test("A folder renamed in Finder: links between its notes are found, named by where the notes were")
+    func linksBetweenNotesMovedOutside() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let fixture = library.fixture
+        let uni = library.uni
+        try FileManager.default.moveItem(at: fixture.url("Uni/Physics"), to: fixture.url("Uni/Mechanics"))
+        let report = try await library.indexer.refresh(.space(uni.id))
+        #expect(
+            Set(report.moved) == [
+                NoteMove(
+                    from: fixture.ref(uni, "Physics/Lecture 7.md"), to: fixture.ref(uni, "Mechanics/Lecture 7.md")),
+                NoteMove(
+                    from: fixture.ref(uni, "Physics/Lecture 8.md"), to: fixture.ref(uni, "Mechanics/Lecture 8.md")),
+            ])
+        #expect(
+            Set(try await library.retrieval.linkingNotes(toMoved: report.moved)) == [
+                fixture.ref(uni, "Physics/Lecture 7.md"), fixture.ref(uni, "Physics/Lecture 8.md"),
+            ])
+        #expect(try await library.retrieval.linkingNotes(toMoved: []).isEmpty)
+    }
+
     @Test("Backlinks find a link to a note whose title has # in it")
     func backlinksToHashTitle() async throws {
         let fixture = try await LibraryFixture()

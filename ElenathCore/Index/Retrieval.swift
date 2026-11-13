@@ -426,6 +426,48 @@ public actor Retrieval {
         return try await backlinks(to: note).map(\.source.note).filter { seen.insert($0).inserted }
     }
 
+    /// The notes whose links pointed at notes that have since been renamed or moved outside Elenath (in
+    /// Finder, or by another app), each once: what `LinkRewriter` repairs once the index has followed the
+    /// moves. The links are judged as they were, with every moved note back in its old place, from each
+    /// moved note's own container. A moved note that links to itself or to another moved note is named
+    /// by its old place, as `LinkRewriter` expects.
+    public func linkingNotes(toMoved moves: [NoteMove]) async throws -> [NoteRef] {
+        var seen = Set<NoteRef>()
+        var result: [NoteRef] = []
+        for (container, group) in Dictionary(grouping: moves, by: \.from.container)
+        where group.allSatisfy({ $0.to.container == container }) {
+            var context = try await linkContext(for: container)
+            for move in group {
+                context = context.moving(move.to, to: move.from)
+            }
+            let resolver = context.resolver
+            let old = Set(group.map(\.from))
+            let oldPlace = Dictionary(group.map { ($0.to, $0.from) }, uniquingKeysWith: { first, _ in first })
+            let keys = Set(group.map { NameSanitizer.key($0.from.title) })
+            for index in try await readable(from: Reach.workplace(of: container)) {
+                for key in keys.sorted() {
+                    for row in try index.links(toTitleKey: key) {
+                        let current = NoteRef(container: index.container, path: row.source.path)
+                        let source = oldPlace[current] ?? current
+                        let resolution: LinkResolution
+                        if row.link.isMarkdown {
+                            resolution = resolver.resolve(markdownDestination: row.link.target, from: source)
+                        } else {
+                            let link = WikiLink(
+                                target: row.link.target, heading: row.link.heading, isEmbed: row.link.isEmbed)
+                            resolution = resolver.resolve(link, from: source)
+                        }
+                        guard case .resolved(let target) = resolution, old.contains(target) else { continue }
+                        if seen.insert(source).inserted {
+                            result.append(source)
+                        }
+                    }
+                }
+            }
+        }
+        return result
+    }
+
     // MARK: - One note
 
     /// A note's text as it was last indexed, for anything other than showing the note to the user: a

@@ -50,8 +50,13 @@ struct MainView: View {
             if settings.hasCompletedOnboarding {
                 LibraryWindow()
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if model.isReadOnly {
-                            ReadOnlyBanner()
+                        VStack(spacing: 0) {
+                            if let offer = model.linkRepairOffer {
+                                LinkRepairBanner(offer: offer)
+                            }
+                            if model.isReadOnly {
+                                ReadOnlyBanner()
+                            }
                         }
                     }
             } else {

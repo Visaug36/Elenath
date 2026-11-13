@@ -118,6 +118,12 @@ final class AppModel {
     var importStatus: ImportStatus? = nil
     @ObservationIgnored var importTask: Task<Void, Never>?
     @ObservationIgnored var importDismissal: Task<Void, Never>?
+    /// Notes renamed or moved outside Elenath whose links can be updated: the banner at the foot of the
+    /// window.
+    var linkRepairOffer: LinkRepairOffer? = nil
+    /// How many of Elenath's own steps are running. The watcher's changes wait for them, so a rename
+    /// Elenath made is never taken for one made in Finder.
+    @ObservationIgnored var stepsInFlight = 0
 
     /// The main window's undo manager; `MainView` sets it from `@Environment(\.undoManager)`.
     @ObservationIgnored weak var undoManager: UndoManager?
@@ -785,10 +791,12 @@ final class AppModel {
         isIndexing = true
         refreshSidebar()
         Task {
-            await services.indexer.refreshAll()
+            let reports = await services.indexer.refreshAll()
             guard session == librarySession else { return }
             isIndexing = false
             contentChanged()
+            // Notes renamed in Finder while Elenath was closed.
+            await notesMovedOutside(reports.values.flatMap(\.moved))
         }
     }
 
@@ -848,8 +856,20 @@ final class AppModel {
         }
     }
 
+    /// Called when the last running step is done: handles what the watcher saw meanwhile.
+    func stepsFinished() {
+        guard stepsInFlight == 0, !pendingChange.isEmpty, changeTask == nil else { return }
+        let session = librarySession
+        changeTask = Task {
+            guard session == librarySession else { return }
+            changeTask = nil
+            await processPendingChange()
+        }
+    }
+
     private func processPendingChange() async {
-        guard let services, state == .ready else { return }
+        // Elenath's own steps index what they change; what the watcher saw of them waits until they're done.
+        guard let services, state == .ready, stepsInFlight == 0 else { return }
         let change = pendingChange
         pendingChange = LibraryChange()
         var containers = change.containers
@@ -878,6 +898,7 @@ final class AppModel {
             await session.fileMayHaveChanged()
         }
         contentChanged()
+        await notesMovedOutside(moves)
     }
 }
 

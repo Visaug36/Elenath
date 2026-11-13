@@ -475,7 +475,12 @@ public enum LinkRewriter {
 - `LinkRewriter` only rewrites links that resolved to the note before the move. Shown text and headings are
   kept. The app applies the edits and the file move as one undo step.
 - When a file is renamed or moved outside Elenath, the indexer recognizes it (by `id`, else by file identity,
-  else by content hash) and the same rewrite is offered as one step.
+  else by content hash) and reports it in `IndexReport.moved`. `Retrieval.linkingNotes(toMoved:)` finds the
+  notes whose links pointed at it, judged with the catalog as it was (every moved note back in its old place).
+  The app offers the same rewrite in a banner ("Update Links"); accepted, it is one undo step, and Undo puts
+  back each note's text if the note still says what Elenath wrote. Nothing is changed until it is accepted.
+  Moves are looked for whenever the watcher's changes are processed and when the index is refreshed at launch;
+  while one of Elenath's own steps runs, the watcher's changes wait, so its own renames are never offered.
 
 ## Index and retrieval (`ElenathCore/Index`): built
 
@@ -540,6 +545,7 @@ public actor Retrieval {
     public func openTasks(from workplace: Workplace, limit: Int) async throws -> [TaskHit]
     public func recentNotes(from workplace: Workplace, limit: Int) async throws -> [NoteHit]
     public func linkingNotes(to note: NoteRef) async throws -> [NoteRef]     // for LinkRewriter
+    public func linkingNotes(toMoved moves: [NoteMove]) async throws -> [NoteRef]  // after a rename in Finder
     public func notesLinking(throughFolderNamed name: String, from workplace: Workplace) async throws -> [NoteRef]
     public func linkContext(for container: Container) async throws -> LinkContext  // resolve many links at once
     public func attachmentNamesShared(by note: NoteRef) async throws -> Set<String>

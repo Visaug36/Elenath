@@ -178,6 +178,16 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Phase 2 as built (2026-11-13):**
+  - **App layer:** `AppModel` (with `+Notes`, `+Import`, `+Files`, `+LinkRepair`) owns the library, navigation and every change; `EditorSession` owns the open note's autosave (0.5 s), conflicts and recovery copies. The editor is an `NSTextView` on TextKit 1, restyled per edited paragraph from the core's scanner.
+  - **Undo:** every change to notes, folders and spaces is an `UndoableStep` on the window's undo manager; a step returns its own inverse. Typing has its own undo per note.
+  - **Renames in Finder:** the index recognizes them; a banner offers to update the links that still point to the old place ("Update Links", one undoable step; Undo restores a note only if it still says what Elenath wrote). Nothing is rewritten without that click. The watcher's changes wait while one of Elenath's own steps runs, so its own renames are never offered.
+  - **Imports:** a `.zip` is copied as it is (unzipping would need code outside the system frameworks); the import card says to unpack a WhatsApp export first and stays until closed.
+  - **Search filters:** the space (spaces that mix), the folder (once a space is chosen, or inside a sealed space), the kind, the tag and the time.
+  - **Counts** use automatic grammar agreement (`^[\(n) item](inflect: true)`), so the catalog has no plural variants to keep.
+  - **Platform facts from CI:** `NSMenuItem` isn't main-actor isolated in the macOS 26 SDK, so a menu item that runs a closure goes through a main-actor `NSObject` target (`MenuAction`). `showSettingsWindow:` does nothing since macOS 14; the demo opens Settings with the `openSettings` environment action. Xcode 27 warns about `[weak self]` inside a closure that captured `self` strongly (`#ImplicitStrongCapture`).
+  - **String Catalog check:** it also lists the keys the code no longer uses (from the `.stringsdata` JSON), as warnings with `UNUSED` lines.
+  - **Defaults chosen during the core's review, shown to the user:** titles Elenath makes turn `# | ^ [ ]` into "-"; a space restored from a backup is sealed until the user decides; a space folder copied in Finder gets an id of its own and keeps every setting.
 - **Icon (user, 2026-11-11):** option A, the open notebook under the Plough. The master is `docs/icon/icon.svg`; `scripts/icon/make-appicon.sh` renders the AppIcon set and the README images from it. The other two options are gone from the tree (they are in the history).
 - **Import (user, 2026-11-11):**
   - WhatsApp: the notes are in a chat with oneself, so every message is a note. A chat export becomes notes where it is dropped (usually the Inbox): messages sent within a few minutes of each other are one note, dated when they were sent.

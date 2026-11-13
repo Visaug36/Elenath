@@ -194,6 +194,14 @@ All", and its folders and notes. A folder's page has the folder's name and the s
 
 VoiceOver reads a space row as "Uni, space" or "Red Cross, sealed space", and the Inbox as "Inbox, 3 items".
 
+**Banners at the foot of the window** (`BackgroundSidebar`, a `SeparatorLine` on top, 12.5 pt `TextSecondary`):
+
+- *Read-only* (`lock.fill` in `AccentText`): the library was saved by a newer Elenath.
+- *Links to update* (`link`): notes were renamed or moved outside Elenath and other notes still link to where
+  they were. "“Reading list” was renamed “To read” outside Elenath. Links in 2 notes still use the old name."
+  (or "was moved…", or "3 notes were renamed or moved outside Elenath…"), with Not Now (plain) and Update Links
+  (small, amber). Update Links is one step that ⌘Z takes back.
+
 ### 2. Today
 
 The landing screen. A header band 96 pt high with stars: "Today" (New York 26 pt) and the date

@@ -52,8 +52,8 @@ Elenath is being built in the open, one phase at a time. **Version 0.1 is for no
   <kbd>⌘</kbd><kbd>O</kbd> jumps to a note by its title.
 - **Import**: drop Markdown, text, Word and rich-text documents, PDFs, pictures, whole folders or a WhatsApp chat
   on a space or the Inbox. Everything is copied; your originals stay where they were.
-- **Plain files, live.** Rename or move a note and the links to it follow. Edit a note in another app and Elenath
-  shows the change at once. If a note changes on disk while you have unsaved edits, you keep both.
+- **Plain files, live.** Rename or move a note and the links to it follow; rename one in Finder and Elenath
+  offers to update its links. Edit a note in another app and Elenath shows the change at once. If a note changes on disk while you have unsaved edits, you keep both.
 - **Undo for everything**: typing, ticking a task, renaming, moving, filing, trashing.
 - **Night and Dawn**, or matching the system.
 

@@ -25,7 +25,12 @@ extension AppModel {
             NSSound.beep()
             return
         }
+        stepsInFlight += 1
         let work = Task { @MainActor () -> UndoableStep? in
+            defer {
+                self.stepsInFlight -= 1
+                self.stepsFinished()
+            }
             do {
                 return try await step.perform(self)
             } catch {

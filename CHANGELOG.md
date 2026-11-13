@@ -25,8 +25,9 @@ arrives in 0.2; until then you file the Inbox by hand.
   tables, task boxes you can tick, `[[links]]` with completion (⌘-click or ⌘↩ follows one), `#tags`, and the
   pictures and PDFs you drop on a note shown in it. Above the text: the title, the place, the kind and the
   tags. Below it: the notes that link here. It saves as you type. Any language, right to left included.
-- **Plain files, live.** Renaming or moving a note rewrites the links to it. Edits made in Finder or another
-  app show up at once. If a note changes on disk while you have unsaved edits, both versions are kept, as
+- **Plain files, live.** Renaming or moving a note rewrites the links to it. When a note is renamed or moved
+  in Finder, a banner offers to update the links that still point to where it was. Edits made in Finder or
+  another app show up at once. If a note changes on disk while you have unsaved edits, both versions are kept, as
   "Title (conflict date time)". A save that fails keeps your text and a recovery copy. Deleting moves to the
   Trash.
 - **Inbox and Quick Capture** (⌥⇧Space from any app; change it in Settings): type, paste text, a picture or a

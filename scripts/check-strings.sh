@@ -44,6 +44,10 @@ if missing:
     print(f"::error::{len(missing)} string(s) used in code are missing from {sys.argv[1]}:")
     for key in missing:
         print(f"  {key!r}")
+    # The entries as Xcode extracted them, one JSON object per line, to paste into the catalog.
+    print("Missing entries:")
+    for key in missing:
+        print("ENTRY " + json.dumps({key: after[key]}, ensure_ascii=False))
     sys.exit(1)
 print(f"All {len(after)} strings are in the catalog.")
 PY

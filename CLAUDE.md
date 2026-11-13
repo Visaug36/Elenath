@@ -239,9 +239,9 @@ Keep this section current. Newest first.
 - The defaults listed under Decisions were shown to the user on 2026-11-11. They stand unless the user changes them.
 - The Liquid Glass app icon for macOS 26 (an Icon Composer `.icon` file) is not planned; the AppIcon set is used, as in Ithil.
 - Not verified (the page is blocked here): whether GitHub has declared the `xcode-27` image generally available.
-- The languages I write in, and whether the embedder and the model cover them.
-- The seven places my notes live today.
-- Needs a check on a real Mac (CI can't do it): Does the on-device model answer from the sandboxed, ad-hoc-signed app? Do the embedding assets arrive without a network entitlement? Do the folder bookmarks survive an update to a new ad-hoc-signed build?
+- Whether the embedder and the model cover the other languages, once they are known.
+- Needs a check on a real Mac (CI can't do it): Does the on-device model answer from the sandboxed, ad-hoc-signed app? Do the embedding assets arrive without a network entitlement? Do the folder bookmarks survive an update to a new ad-hoc-signed build? Version 0.1.0's diagnostics report (Settings › Files › Run Diagnostics) answers the first two; ask the user for it at the stop point.
+- Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
 - 2026-11-11: **0.0.1 published; Phase 2 started.** The Release workflow built the merge commit and published https://github.com/Visaug36/Elenath/releases/tag/v0.0.1 as a prerelease, creating the tag itself, so no tag ever has to be pushed from here or made by hand. Phase 2 has begun on `claude/new-session-fplgmb`, restarted from `main`: the name rules, the model types, the folder policy and the document store for library.json and space.json are in `ElenathCore` with their tests (74 tests locally). Next in Phase 2, in this order: `LibraryCatalog`, `NoteText` and front matter, `NoteStore`, the Markdown scanner, links, the index with `Reach` and the leak tests, capture, import; then the app layer.

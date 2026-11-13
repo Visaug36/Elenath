@@ -439,7 +439,7 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         guard let textView else { return }
         let menu = NSMenu()
         for note in notes {
-            let item = ActionMenuItem(title: "\(note.title) — \(model.placeName(note.container, note.path.folder))") {
+            let item = MenuAction.item(title: "\(note.title) — \(model.placeName(note.container, note.path.folder))") {
                 [weak self] in
                 self?.model.open(note)
             }
@@ -611,24 +611,26 @@ enum LinkCompletion {
     }
 }
 
-/// A menu item that runs a closure.
-final class ActionMenuItem: NSMenuItem {
-    private let handler: @MainActor () -> Void
+/// The target of a menu item that runs a closure. The item keeps it alive through
+/// `representedObject`, since a menu item's target is weak.
+@MainActor
+final class MenuAction: NSObject {
+    private let handler: () -> Void
 
-    init(title: String, handler: @escaping @MainActor () -> Void) {
+    private init(_ handler: @escaping () -> Void) {
         self.handler = handler
-        super.init(title: title, action: #selector(run), keyEquivalent: "")
-        target = self
-    }
-
-    @available(*, unavailable)
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) is not used")
     }
 
     @objc private func run() {
-        MainActor.assumeIsolated {
-            handler()
-        }
+        handler()
+    }
+
+    /// A menu item that runs `handler` when it's chosen.
+    static func item(title: String, handler: @escaping () -> Void) -> NSMenuItem {
+        let action = MenuAction(handler)
+        let item = NSMenuItem(title: title, action: #selector(MenuAction.run), keyEquivalent: "")
+        item.target = action
+        item.representedObject = action
+        return item
     }
 }

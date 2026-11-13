@@ -66,5 +66,16 @@ shot() {
     sleep 1
 }
 
-shot window-night -demoAppearance night
-shot window-dawn -demoAppearance dawn
+# The demo's clock is pinned, so the dates in the shots don't change from one run to the next.
+now=(-demoNow 2026-11-10T14:30)
+shot today-night -demoAppearance night -demoScene today "${now[@]}"
+shot today-dawn -demoAppearance dawn -demoScene today "${now[@]}"
+shot note-night -demoAppearance night -demoScene note "${now[@]}"
+shot note-dawn -demoAppearance dawn -demoScene note "${now[@]}"
+shot inbox-night -demoAppearance night -demoScene inbox "${now[@]}"
+shot space-night -demoAppearance night -demoScene space "${now[@]}"
+shot search-night -demoAppearance night -demoScene search "${now[@]}"
+shot sealed-night -demoAppearance night -demoScene sealed "${now[@]}"
+shot capture-night -demoAppearance night -demoScene capture "${now[@]}"
+shot onboarding-night -demoAppearance night -demoScene onboarding "${now[@]}"
+shot settings-night -demoAppearance night -demoScene settings "${now[@]}"

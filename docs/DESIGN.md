@@ -187,7 +187,20 @@ contents: subfolders, then notes as rows (title 13 pt semibold with the kind's s
 `TextSecondary`, date at the right, tabular). Opening a note shows the editor. Back and forward walk through
 what was opened, like a browser.
 
+A space's own page starts with a header: the space's symbol in its color, its name (New York 26 pt), a
+`lock.fill` "Sealed" capsule for a sealed space, its description in `TextSecondary`, and New Folder
+(`folder.badge.plus`) at the right. Then an **Open tasks** card with the space's first six open tasks and "Show
+All", and its folders and notes. A folder's page has the folder's name and the same list.
+
 VoiceOver reads a space row as "Uni, space" or "Red Cross, sealed space", and the Inbox as "Inbox, 3 items".
+
+**Banners at the foot of the window** (`BackgroundSidebar`, a `SeparatorLine` on top, 12.5 pt `TextSecondary`):
+
+- *Read-only* (`lock.fill` in `AccentText`): the library was saved by a newer Elenath.
+- *Links to update* (`link`): notes were renamed or moved outside Elenath and other notes still link to where
+  they were. "“Reading list” was renamed “To read” outside Elenath. Links in 2 notes still use the old name."
+  (or "was moved…", or "3 notes were renamed or moved outside Elenath…"), with Not Now (plain) and Update Links
+  (small, amber). Update Links is one step that ⌘Z takes back.
 
 ### 2. Today
 
@@ -293,9 +306,13 @@ token color.
 
 **Search** (⇧⌘F focuses the toolbar field). While the field has text, the detail shows results:
 
-- A row of filter capsules (`ControlFill`; the active ones `AccentSoft` with `AccentText`): the scope ("This
-  Space" or "Everywhere"), Folder, Tag, Kind, Date.
-- In a sealed space the scope is fixed and reads `lock.fill` "Red Cross only".
+- A row of filter capsules (`ControlFill`; the active ones `AccentSoft` with `AccentText`), each a menu: the
+  space ("Every Space" or one of the spaces that mix), the folder (once one space is chosen: "Any Folder" or a
+  folder, nested ones as "Physics › Week 1"), the kind, the tag and the time ("Any Time", "Past Week", "Past
+  Month", "Past Year"). The count of results sits at the right ("1 result", "12 results").
+- In a sealed space the space is fixed and reads `lock.fill` "Red Cross only"; the folder filter offers its
+  folders. Started from the Inbox, it reads `tray` "Inbox only".
+- The results sit in the reading column (720 pt), like every other page.
 - Each result: the title (13 pt semibold) with the kind's symbol, a snippet (12.5 pt `TextSecondary`, the
   matched words in `TextPrimary` on `AccentSoft`), then the space dot, folder and date (tabular).
 - ↑ and ↓ move, ↩ opens. A result opens at its first match, selected.
@@ -311,8 +328,11 @@ a 17 pt field ("Jump to a note…") over a list of titles. It lists recent notes
   `square.and.arrow.down`, "Drop to import into Physics".
 - File › Import… does the same with an open panel.
 - While it runs, a card at the foot of the sidebar shows "Importing 12 of 40…", an amber progress bar and
-  Cancel. When it ends, the card says what happened ("Imported 40 items into Physics. 2 were skipped.") with
-  Show, and goes away on its own.
+  Cancel. When it ends, the card says what happened ("Imported 40 items into Physics.", then "Skipped 2 items:
+  hidden files and links to elsewhere." or "Couldn't read 1 item." when that happened) with Show and Done. It
+  goes away on its own after 8 seconds, unless something couldn't be read or a `.zip` was copied: then it says
+  so ("A .zip file was copied as it is. To import a chat exported from WhatsApp, double-click the .zip in
+  Finder, then drop the folder it makes.") and stays until Done.
 - Originals are copied, never moved. The card says so the first time.
 
 ### 8. Spaces

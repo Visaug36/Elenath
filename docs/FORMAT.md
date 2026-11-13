@@ -65,11 +65,13 @@ Elenath/                              the library: one folder, chosen on first l
 Elenath only creates and renames files and folders with names that pass these rules. Names made in Finder
 are used as they are.
 
-- `/` and `:` become `-`.
+- `/` and `:` become `-`, and so do `#`, `|`, `^`, `[` and `]`, which would break a wiki link to the note
+  (Obsidian refuses them too).
 - Control characters and line breaks become spaces. Runs of whitespace collapse to one space.
 - Leading dots are removed, so nothing Elenath names is hidden. Trailing dots and spaces are removed.
 - A title keeps at most 120 characters and 200 UTF-8 bytes, cut on a character boundary. That leaves room
-  for an extension and for the suffixes below inside the file system's 255-byte limit.
+  for an extension and for the suffixes below inside the file system's 255-byte limit. A conflict copy's
+  title (see "Conflicts") is cut to the same 200 bytes, suffix included.
 - A name that is empty after this becomes `Untitled`.
 - Names are compared without regard to case or Unicode normalization, as macOS volumes do. Two items in
   one folder never differ only by case.
@@ -141,7 +143,11 @@ to map them.
   symbol by default) the first time it opens the library.
 - **Sealed fails closed.** If a `space.json` is missing or damaged, Elenath restores it from its newest backup
   or safety copy and says so. If nothing can be restored, the space counts as sealed until you decide, so its
-  content is never shown elsewhere by mistake.
+  content is never shown elsewhere by mistake. A space restored from a backup (not from the safety copy,
+  which is always current) is sealed too until you decide, since the backup may be older than the last time
+  the space was sealed. Sealing or unsealing a space backs its `space.json` up at once.
+- **Copied folders.** Two folders with the same `id` in `space.json` are a folder copied in Finder. The
+  folder Elenath knew keeps the id; the copy gets a new one, keeping every other setting, sealed included.
 
 ### What sealed means for readers
 
@@ -283,7 +289,8 @@ The list marker may be `-`, `*`, `+` or a number, at any indent. Ticking a task 
   file arrives). The original stays where it was. Clashes get a number, as in Finder.
 - The note refers to it with `![[name.ext]]` for images and PDFs, and with a Markdown link
   (`[name.ext](Attachments/name.ext)`) for other files.
-- When Elenath moves a note to another folder, the attachments that only this note uses move with it.
+- When Elenath moves a note to another folder, the attachments it uses go with it: moved when no other note
+  in the space uses them, copied when another note does or when Elenath can't be sure.
 
 ## The Inbox
 
@@ -316,7 +323,7 @@ them is needed to open a library: all are rebuilt from the folder or are only a 
 
 | What | Where (under `Data/Library/Application Support/Elenath/`) |
 |---|---|
-| Safety copies of `library.json` and every `space.json` | `SafetyCopies/<library id>/` |
+| Safety copies of `library.json` (`<library id>.json`) and of every `space.json` (`<library id>/<space id>.json`), with a record of which folder is which space | `SafetyCopies/` |
 | The search index, one SQLite database per space and one for the Inbox | `Index/<library id>/` |
 | Edits that could not be saved, kept until the next launch | `Recovery/<library id>/` |
 

@@ -5,6 +5,8 @@
 #   2. ElenathCore has no UI code: it never imports SwiftUI, AppKit, UIKit or Cocoa.
 #   3. The entitlements are exactly the App Sandbox, app-scope bookmarks and user-selected read-write
 #      files. No network entitlement and no Private Cloud Compute, so macOS itself keeps notes on the Mac.
+#   4. Every public query of Retrieval, the one type that reads the index, is called in SealingLeakTests,
+#      so a new query can't be added without proving that it respects sealed spaces.
 #
 # Given an app bundle, it also checks the entitlements that app is really signed with. Use a Release
 # build for that: Xcode adds a debugging entitlement to Debug builds.
@@ -55,7 +57,23 @@ if [[ -n "$app" ]]; then
     check_entitlements "$app" <<< "$signed"
 fi
 
+# 4. Sealing: every query of Retrieval is asked from every workplace in the leak tests.
+retrieval=ElenathCore/Index/Retrieval.swift
+leak_tests=ElenathCoreTests/Index/SealingLeakTests.swift
+if [[ -f "$retrieval" ]]; then
+    queries=$(awk '/^public actor Retrieval/ { inside = 1 } inside' "$retrieval" \
+        | (grep -oE 'public func [A-Za-z]+' || true) | awk '{ print $3 }' | sort -u)
+    if [[ -z "$queries" ]]; then
+        fail "Found no queries in $retrieval. Has Retrieval moved?"
+    fi
+    for query in $queries; do
+        if ! grep -qE "retrieval\.${query}\(" "$leak_tests" 2> /dev/null; then
+            fail "Retrieval.${query} is not in $leak_tests. A query that isn't checked there may leak a sealed space."
+        fi
+    done
+fi
+
 if [[ $status -eq 0 ]]; then
-    echo "The project follows its rules: no packages, no UI code in ElenathCore, sandboxed with no network."
+    echo "The project follows its rules: no packages, no UI code in ElenathCore, sandboxed with no network, every query leak-tested."
 fi
 exit $status

@@ -66,6 +66,10 @@ Elenath is being built in the open, one phase at a time. **Version 0.1 is for no
   <img src="docs/images/capture-night.png" width="49%" alt="The Quick Capture panel over the window">
 </p>
 <p align="center">
+  <img src="docs/images/sealed-night.png" width="49%" alt="A sealed space's page: a Sealed badge, its open tasks and its notes, with the sidebar showing only its own tags">
+  <img src="docs/images/settings-night.png" width="34%" alt="Settings: the appearance, the Quick Capture shortcut and launch at login">
+</p>
+<p align="center">
   <img src="docs/images/note-dawn.png" width="70%" alt="The same note in the Dawn appearance">
 </p>
 

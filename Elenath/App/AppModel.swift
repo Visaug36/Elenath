@@ -807,11 +807,11 @@ final class AppModel {
 
     private func startWatching(_ root: URL) {
         let session = librarySession
-        Task {
+        Task { [weak self] in
             let resolved = await Task.detached(priority: .utility) {
                 FolderAccess.resolvedPath(of: root)
             }.value
-            guard session == librarySession else { return }
+            guard let self, session == librarySession else { return }
             watchedRootPath = resolved
             let watcher = LibraryWatcher(root: root) { [weak self] change in
                 self?.folderChanged(change)
@@ -896,7 +896,9 @@ enum SpaceSheetRequest: Identifiable, Hashable {
 struct ImportStatus: Equatable {
     enum Phase: Equatable {
         case running(completed: Int, total: Int, currentName: String?)
-        case finished(notes: Int, files: Int, skipped: Int, failed: Int)
+        /// `archives` counts the .zip files that were copied as they are: an exported chat has to be
+        /// unpacked first, and the card says so.
+        case finished(notes: Int, files: Int, skipped: Int, failed: Int, archives: Int)
     }
 
     var phase: Phase

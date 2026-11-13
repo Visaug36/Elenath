@@ -50,9 +50,9 @@ final class QuickCaptureHotKeyController {
         guard let settings else { return }
         withObservationTracking {
             _ = settings.quickCaptureHotKey
-        } onChange: {
+        } onChange: { [weak self] in
             // Called before the change lands, on whichever thread made it; re-read it on the main actor.
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 self?.settingDidChange()
             }
         }

@@ -411,7 +411,7 @@ private struct ImportStatusCard: View {
                         .font(Typography.footnote)
                         .foregroundStyle(Color.accentText)
                     }
-                case .finished(let notes, let files, let skipped, let failed):
+                case .finished(let notes, let files, let skipped, let failed, let archives):
                     Text("Imported \(notes + files) items into \(status.destinationName).")
                         .font(Typography.secondary)
                         .foregroundStyle(Color.textPrimary)
@@ -420,6 +420,14 @@ private struct ImportStatusCard: View {
                         Text("\(skipped) were skipped and \(failed) could not be read.")
                             .font(Typography.footnote)
                             .foregroundStyle(Color.textSecondary)
+                    }
+                    if archives > 0 {
+                        Text(
+                            "A .zip file was copied as it is. To import a chat exported from WhatsApp, double-click the .zip in Finder, then drop the folder it makes."
+                        )
+                        .font(Typography.footnote)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                     Text("The originals are where they were.")
                         .font(Typography.footnote)

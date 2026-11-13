@@ -120,14 +120,17 @@ extension AppModel {
             }.value
             do {
                 let report = try await services.importer.run(plan, into: folder, container: container) { progress in
-                    Task { @MainActor [weak self] in
-                        self?.importProgressed(progress)
+                    Task { @MainActor in
+                        self.importProgressed(progress)
                     }
                 }
                 await containerChanged([container])
+                let archives = report.files.count(where: { $0.name.lowercased().hasSuffix(".zip") })
                 importStatus?.phase = .finished(
                     notes: report.notes.count, files: report.files.count, skipped: report.skipped.count,
-                    failed: report.failed.count)
+                    failed: report.failed.count, archives: archives)
+                // A card with something to read stays until it's closed.
+                guard report.failed.isEmpty, archives == 0 else { return }
                 importDismissal = Task {
                     do {
                         try await Task.sleep(for: .seconds(8))

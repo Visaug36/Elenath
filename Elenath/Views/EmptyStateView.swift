@@ -28,7 +28,7 @@ struct EmptyStateView: View {
     EmptyStateView(
         illustration: .emptySky,
         title: "Nothing here yet.",
-        message: "This early build only shows Elenath’s window. Notes arrive in version 0.1."
+        message: "Press ⌘N to write the first note, or drop files here to import them."
     )
     .frame(width: 360, height: 280)
     .starryBackground(.backgroundWindow)

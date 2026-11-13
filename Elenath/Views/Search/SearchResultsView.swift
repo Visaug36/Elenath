@@ -1,8 +1,8 @@
 import ElenathCore
 import SwiftUI
 
-/// The results for what is typed in the toolbar's search field, with filters for where, what kind, which
-/// tag and when.
+/// The results for what is typed in the toolbar's search field, with filters for the space, the folder,
+/// what kind, which tag and when.
 ///
 /// A search reads what the place it was started from may read: from inside a sealed space that is the
 /// space alone, and from anywhere else no sealed space is in it.
@@ -10,18 +10,14 @@ struct SearchResultsView: View {
     @Environment(AppModel.self) private var model
     @State private var hits: [SearchHit] = []
     @State private var hasSearched = false
-    @State private var scope: Scope = .everywhere
+    /// One space to search in, of those the search may read. Nil: all of them.
+    @State private var spaceFilter: SpaceID?
+    /// One folder of the space searched in, and what is inside it.
+    @State private var folder: ItemPath?
     @State private var kind: NoteKind?
     @State private var tag: String?
     @State private var period: Period = .anyTime
     @State private var selection: SearchHit.Item?
-
-    enum Scope: Hashable {
-        /// Everything the place the search started in may read.
-        case everywhere
-        /// Only the space the search started in.
-        case thisSpace
-    }
 
     enum Period: Hashable, CaseIterable {
         case anyTime, pastWeek, pastMonth, pastYear
@@ -75,10 +71,13 @@ struct SearchResultsView: View {
                 }
             }
         }
+        // The column notes are read in; the list's rows have insets of their own.
+        .frame(maxWidth: Metrics.editorColumnWidth + 32)
+        .frame(maxWidth: .infinity)
         .background(Color.backgroundWindow)
         .task(
             id: Query(
-                text: model.searchText, scope: scope, kind: kind, tag: tag, period: period,
+                text: model.searchText, space: spaceFilter, folder: folder, kind: kind, tag: tag, period: period,
                 revision: model.contentRevision)
         ) {
             await search()
@@ -87,7 +86,8 @@ struct SearchResultsView: View {
 
     private struct Query: Hashable {
         var text: String
-        var scope: Scope
+        var space: SpaceID?
+        var folder: ItemPath?
         var kind: NoteKind?
         var tag: String?
         var period: Period
@@ -102,25 +102,24 @@ struct SearchResultsView: View {
         return nil
     }
 
+    /// The space whose folders the folder filter offers: a sealed space the search started in, or the
+    /// space chosen in the space filter.
+    private var folderSpace: SpaceID? {
+        if let space = originSpace, space.isSealed {
+            return space.id
+        }
+        return spaceFilter
+    }
+
     private var filters: some View {
         HStack(spacing: 8) {
-            if let space = originSpace {
-                if space.isSealed {
-                    Label("\(space.name) only", systemImage: "lock.fill")
-                        .font(Typography.footnote)
-                        .foregroundStyle(Color.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Color.controlFill, in: Capsule())
-                } else {
-                    FilterMenu(
-                        title: scope == .thisSpace ? Text(verbatim: space.name) : Text("Everywhere"),
-                        isActive: scope == .thisSpace
-                    ) {
-                        Button("Everywhere") { scope = .everywhere }
-                        Button(space.name) { scope = .thisSpace }
-                    }
-                }
+            if let space = originSpace, space.isSealed {
+                Label("\(space.name) only", systemImage: "lock.fill")
+                    .font(Typography.footnote)
+                    .foregroundStyle(Color.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.controlFill, in: Capsule())
             } else if model.searchOrigin == .inbox {
                 Label("Inbox only", systemImage: "tray")
                     .font(Typography.footnote)
@@ -128,6 +127,41 @@ struct SearchResultsView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(Color.controlFill, in: Capsule())
+            } else {
+                // Spaces that mix: a sealed space is searched only from inside it.
+                FilterMenu(
+                    title: spaceFilter.flatMap { model.space($0) }.map { Text(verbatim: $0.name) }
+                        ?? Text("Every Space"),
+                    isActive: spaceFilter != nil
+                ) {
+                    Button("Every Space") {
+                        spaceFilter = nil
+                        folder = nil
+                    }
+                    ForEach(model.spaces.filter { !$0.isSealed }, id: \.id) { space in
+                        Button {
+                            spaceFilter = space.id
+                            folder = nil
+                        } label: {
+                            Text(verbatim: space.name)
+                        }
+                    }
+                }
+            }
+            if let folderSpace, let paths = model.folders[folderSpace], !paths.isEmpty {
+                FilterMenu(
+                    title: folder.map { Text(verbatim: Self.folderName($0)) } ?? Text("Any Folder"),
+                    isActive: folder != nil
+                ) {
+                    Button("Any Folder") { folder = nil }
+                    ForEach(paths, id: \.self) { path in
+                        Button {
+                            folder = path
+                        } label: {
+                            Text(verbatim: Self.folderName(path))
+                        }
+                    }
+                }
             }
             FilterMenu(
                 title: kind.map { Text(verbatim: KindStyle.name(for: $0)) } ?? Text("Any Kind"), isActive: kind != nil
@@ -158,7 +192,7 @@ struct SearchResultsView: View {
             }
             Spacer()
             if hasSearched {
-                Text("\(hits.count) results")
+                Text("^[\(hits.count) result](inflect: true)")
                     .font(Typography.footnote)
                     .monospacedDigit()
                     .foregroundStyle(Color.textTertiary)
@@ -200,9 +234,8 @@ struct SearchResultsView: View {
         }
         var query = SearchQuery(text: text, tag: tag, kind: kind, limit: 60)
         query.modifiedAfter = period.start(from: model.timeSource.now)
-        if scope == .thisSpace, let space = originSpace {
-            query.space = space.id
-        }
+        query.space = spaceFilter
+        query.folder = folder
         let found = (try? await services.retrieval.search(query, from: model.searchOrigin)) ?? []
         guard !Task.isCancelled else { return }
         hits = found
@@ -210,6 +243,11 @@ struct SearchResultsView: View {
         if let selection, !found.contains(where: { $0.item == selection }) {
             self.selection = nil
         }
+    }
+
+    /// "Physics › Week 1" for the folder Physics/Week 1.
+    private static func folderName(_ path: ItemPath) -> String {
+        path.description.split(separator: "/").joined(separator: " › ")
     }
 
     private func open(_ item: SearchHit.Item) {

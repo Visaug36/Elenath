@@ -172,7 +172,7 @@ private struct InboxRow: View {
             model.go(to: .inbox)
         }
         .libraryDropTarget(.inbox)
-        .accessibilityLabel(Text("Inbox, \(count) items"))
+        .accessibilityLabel(Text("Inbox, ^[\(count) item](inflect: true)"))
     }
 
     private var isSelected: Bool {
@@ -313,7 +313,7 @@ private struct TagRow: View {
         } action: {
             model.go(to: .tag(tag.tag, model.workplace))
         }
-        .accessibilityLabel(Text("Tag \(tag.tag), \(tag.count) notes"))
+        .accessibilityLabel(Text("Tag \(tag.tag), ^[\(tag.count) note](inflect: true)"))
     }
 
     private var isSelected: Bool {
@@ -412,14 +412,21 @@ private struct ImportStatusCard: View {
                         .foregroundStyle(Color.accentText)
                     }
                 case .finished(let notes, let files, let skipped, let failed, let archives):
-                    Text("Imported \(notes + files) items into \(status.destinationName).")
+                    Text("Imported ^[\(notes + files) item](inflect: true) into \(status.destinationName).")
                         .font(Typography.secondary)
                         .foregroundStyle(Color.textPrimary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if skipped + failed > 0 {
-                        Text("\(skipped) were skipped and \(failed) could not be read.")
+                    if skipped > 0 {
+                        Text("Skipped ^[\(skipped) item](inflect: true): hidden files and links to elsewhere.")
                             .font(Typography.footnote)
                             .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if failed > 0 {
+                        Text("Couldn't read ^[\(failed) item](inflect: true).")
+                            .font(Typography.footnote)
+                            .foregroundStyle(Color.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if archives > 0 {
                         Text(

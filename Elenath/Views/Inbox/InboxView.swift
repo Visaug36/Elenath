@@ -18,7 +18,7 @@ struct InboxView: View {
                         .foregroundStyle(Color.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     if let listing, count(listing) > 0 {
-                        Text("\(count(listing)) items")
+                        Text("^[\(count(listing)) item](inflect: true)")
                             .font(Typography.secondary)
                             .monospacedDigit()
                             .foregroundStyle(Color.textSecondary)

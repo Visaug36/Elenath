@@ -12,6 +12,7 @@ struct FolderContentsView: View {
     @State private var listing: FolderListing?
     @State private var details: [ItemPath: NoteHit] = [:]
     @State private var openTasks: [TaskHit] = []
+    @State private var showsAllTasks = false
 
     var body: some View {
         ScrollView {
@@ -100,7 +101,17 @@ struct FolderContentsView: View {
     @ViewBuilder private func contents(_ listing: FolderListing) -> some View {
         if folder.isRoot, !openTasks.isEmpty {
             SectionCard(title: Text("Open tasks")) {
-                ForEach(Array(openTasks.prefix(6).enumerated()), id: \.offset) { _, task in
+                if openTasks.count > 6 {
+                    Button(showsAllTasks ? "Show Fewer" : "Show All") {
+                        showsAllTasks.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(Typography.footnote)
+                    .foregroundStyle(Color.accentText)
+                    .padding(.trailing, 10)
+                }
+            } content: {
+                ForEach(Array(openTasks.prefix(showsAllTasks ? 200 : 6).enumerated()), id: \.offset) { _, task in
                     TaskRowView(task: task, showsPlace: false)
                 }
             }
@@ -245,7 +256,7 @@ struct TagNotesView: View {
                         .foregroundStyle(Color.textPrimary)
                         .accessibilityAddTraits(.isHeader)
                     if let notes {
-                        Text("\(notes.count) notes")
+                        Text("^[\(notes.count) note](inflect: true)")
                             .font(Typography.secondary)
                             .monospacedDigit()
                             .foregroundStyle(Color.textSecondary)

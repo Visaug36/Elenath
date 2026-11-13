@@ -24,7 +24,7 @@ enum Diagnostics {
         lines.append("")
         lines.append("Library")
         lines.append("  Folder bookmark: \(model.bookmarkStatus)")
-        lines.append("  State: \(String(describing: model.state))\(model.isReadOnly ? ", read-only" : "")")
+        lines.append("  State: \(stateName(model.state))\(model.isReadOnly ? ", read-only" : "")")
         lines.append("  Spaces: \(model.spaces.count), sealed: \(model.spaces.filter(\.isSealed).count)")
         if let services = model.services {
             let notes =
@@ -118,6 +118,18 @@ enum Diagnostics {
     }
 
     // MARK: - Helpers
+
+    /// The state without the folder's path, which would name the Mac's user.
+    private static func stateName(_ state: LibraryState) -> String {
+        switch state {
+        case .needsFolder: "no folder chosen"
+        case .loading: "opening"
+        case .ready: "open"
+        case .folderMissing: "the folder is missing"
+        case .noLibrary: "the folder holds no library"
+        case .unreadable: "the library's settings couldn't be read"
+        }
+    }
 
     private static func format(_ duration: Duration) -> String {
         let milliseconds = Double(duration.components.seconds) * 1000 + Double(duration.components.attoseconds) / 1e15

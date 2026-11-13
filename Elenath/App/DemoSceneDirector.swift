@@ -50,7 +50,11 @@ final class DemoSceneDirector {
         case .capture:
             QuickCapturePanelController.shared.show(model: model, text: "uni: ask about the exam date")
         case .settings:
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            // The screenshot takes the largest window, so the main window steps aside for Settings.
+            let main = NSApp.windows.first { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
+            model.demoOpensSettings = true
+            try? await Task.sleep(for: .seconds(1))
+            main?.orderOut(nil)
         }
     }
 

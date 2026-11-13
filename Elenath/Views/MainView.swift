@@ -15,6 +15,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         content
@@ -27,6 +28,11 @@ struct MainView: View {
             }
             .onChange(of: undoManager) { _, newValue in
                 model.undoManager = newValue
+            }
+            .onChange(of: model.demoOpensSettings) { _, opens in
+                guard opens else { return }
+                model.demoOpensSettings = false
+                openSettings()
             }
     }
 

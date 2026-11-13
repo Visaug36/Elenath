@@ -97,6 +97,8 @@ final class AppModel {
     var spaceSheet: SpaceSheetRequest? = nil
     /// A new note whose title should be selected when its editor appears.
     var pendingTitleFocus: NoteRef? = nil
+    /// Set by a `-demo` screenshot run: the main window opens the Settings window.
+    var demoOpensSettings = false
 
     // MARK: - What the sidebar shows
 

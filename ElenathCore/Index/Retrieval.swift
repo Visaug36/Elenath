@@ -410,6 +410,16 @@ public actor Retrieval {
         return result
     }
 
+    /// The files a note refers to that other notes in its space (or the Inbox) refer to as well, by
+    /// name key: what moving the note must copy rather than move. Asked from the note's own container.
+    public func attachmentNamesShared(by note: NoteRef) async throws -> Set<String> {
+        for index in try await readable(from: Reach.workplace(of: note.container))
+        where index.container == note.container {
+            return try index.linkKeysShared(with: note.path)
+        }
+        return []
+    }
+
     /// The notes that link to a note, each once: the ones `LinkRewriter` has to look at when it moves.
     public func linkingNotes(to note: NoteRef) async throws -> [NoteRef] {
         var seen = Set<NoteRef>()

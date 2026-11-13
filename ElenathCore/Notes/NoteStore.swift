@@ -241,9 +241,15 @@ public actor NoteStore {
     }
 
     /// Moves a note to another folder, in its space or another container: this is also how an Inbox item
-    /// is filed. A name that is taken there gets a number. The files in `Attachments` that the note
-    /// embeds or links move with it when no other note beside it uses them, and are copied otherwise.
-    public func move(_ ref: NoteRef, to folder: ItemPath, in container: Container) async throws -> NoteRef {
+    /// is filed. A name that is taken there gets a number.
+    ///
+    /// The files in the `Attachments` folder beside the note that it embeds or links go with it. One is
+    /// moved only when `sharedAttachments` is given and doesn't name it, which says that no other note
+    /// uses it (`Retrieval.attachmentNamesShared(by:)`); otherwise it is copied, so a note elsewhere that
+    /// uses it never loses it.
+    public func move(
+        _ ref: NoteRef, to folder: ItemPath, in container: Container, sharedAttachments: Set<String>? = nil
+    ) async throws -> NoteRef {
         let url = try await writableNoteURL(ref)
         guard let info = fileSystem.info(at: url), !info.isDirectory else { throw NoteStoreError.notFound }
         let folderURL = try await writableFolderURL(folder, in: container)
@@ -259,7 +265,8 @@ public actor NoteStore {
         let newURL = try await noteURL(newRef)
         try fileSystem.moveItem(at: url, to: newURL)
         do {
-            try await carryAttachments(of: newRef, at: newURL, from: ref, sourceFolder: sourceFolderURL)
+            try await carryAttachments(
+                of: newRef, at: newURL, from: ref, sourceFolder: sourceFolderURL, shared: sharedAttachments)
         } catch {
             // The note has moved. Its files are still where they were and can be moved by hand.
             log.error("Could not move a note's attachments", private: String(describing: error))
@@ -547,7 +554,7 @@ public actor NoteStore {
     /// others use is copied. If a different file already has the name in the new place, the newcomer
     /// gets a number and the note's references follow.
     private func carryAttachments(
-        of moved: NoteRef, at movedURL: URL, from old: NoteRef, sourceFolder: URL
+        of moved: NoteRef, at movedURL: URL, from old: NoteRef, sourceFolder: URL, shared: Set<String>?
     ) async throws {
         let data = try fileSystem.readData(at: movedURL)
         guard var text = try? NoteText(data: data) else { return }
@@ -592,7 +599,10 @@ public actor NoteStore {
             }
             guard catalog.contains(destination) else { continue }
             let encoded = reference.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? reference.name
-            let isShared = neighbours.contains { $0.contains(reference.name) || $0.contains(encoded) }
+            // Without word from the index that no other note uses it, a file is copied, never moved. The
+            // notes beside the old place are read as well, in case the index hasn't caught up with them.
+            let usedElsewhere = shared?.contains(NameSanitizer.key(reference.name)) ?? true
+            let isShared = usedElsewhere || neighbours.contains { $0.contains(reference.name) || $0.contains(encoded) }
             if isShared {
                 try fileSystem.copyItem(at: source, to: destination)
             } else {

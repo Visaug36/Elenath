@@ -331,6 +331,24 @@ struct IndexTests {
         #expect(try await retrieval.backlinks(to: idea).isEmpty)
     }
 
+    @Test("Backlinks find a link to a note whose title has # in it")
+    func backlinksToHashTitle() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let uni = try await fixture.space("Uni")
+        try fixture.write("About C#.\n", to: "Uni/C# notes.md")
+        try fixture.write("See [[C# notes]].\n", to: "Uni/Linker.md")
+        await fixture.indexer().refreshAll()
+        let retrieval = fixture.retrieval()
+        let target = fixture.ref(uni, "C# notes.md")
+        #expect(
+            try await retrieval.resolve(
+                WikiLink(inner: "C# notes", isEmbed: false)!, from: fixture.ref(uni, "Linker.md"))
+                == .resolved(target))
+        #expect(try await retrieval.backlinks(to: target).count == 1)
+        #expect(try await retrieval.linkingNotes(to: target) == [fixture.ref(uni, "Linker.md")])
+    }
+
     @Test("The link context follows the index: a new note resolves as soon as it is indexed")
     func linkContextIsFresh() async throws {
         let library = try await Library()

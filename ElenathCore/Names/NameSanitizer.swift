@@ -20,7 +20,8 @@ public enum NameSanitizer {
 
     /// `title` made safe as the name of a note (without its extension) or of a folder.
     ///
-    /// - "/" and ":" become "-".
+    /// - "/" and ":" become "-", and so do "#", "|", "^", "[" and "]", which would break a wiki link to
+    ///   the note (as in Obsidian).
     /// - Control characters and line breaks become spaces; runs of whitespace collapse to one space;
     ///   whitespace at both ends is trimmed.
     /// - Leading dots (and spaces after them) are removed, so the item is never hidden.
@@ -44,8 +45,16 @@ public enum NameSanitizer {
 
     /// The title of the copy that keeps unsaved edits when a note changed on disk meanwhile:
     /// "Title (conflict 2026-11-10 14.30)", in local time.
+    ///
+    /// A long title is shortened so that the whole stays within 200 UTF-8 bytes, like any title Elenath
+    /// makes: a name made in Finder can be close to the file system's limit already.
     public static func conflictTitle(for title: String, now: Date, timeZone: TimeZone) -> String {
-        "\(title) (conflict \(stamp(now, in: timeZone)))"
+        let suffix = " (conflict \(stamp(now, in: timeZone)))"
+        var base = title
+        while !base.isEmpty, (base + suffix).utf8.count > maximumTitleUTF8Length {
+            base.removeLast()
+        }
+        return droppingTrailingDotsAndSpaces(base) + suffix
     }
 
     /// How names are compared: without regard to case or Unicode normalization, as macOS volumes do.
@@ -86,7 +95,7 @@ public enum NameSanitizer {
         var cleaned = String.UnicodeScalarView()
         for scalar in text.unicodeScalars {
             switch scalar {
-            case "/", ":":
+            case "/", ":", "#", "|", "^", "[", "]":
                 cleaned.append("-")
             default:
                 cleaned.append(isControlOrLineBreak(scalar) ? " " : scalar)

@@ -58,8 +58,24 @@ public enum LinkRewriter {
                     }
                     var rewritten = link
                     rewritten.target = after.shortestTarget(for: targetAfter, from: noteAfter)
-                    guard after.resolve(rewritten, from: noteAfter) == .resolved(targetAfter) else { continue }
-                    edits.append(LinkEdit(note: noteAfter, range: span.range, replacement: rewritten.written))
+                    if link.heading != nil {
+                        // "[[C# notes]]" names the note "C# notes" when no note "C" exists: what looked like
+                        // a heading was part of the title, and the new title replaces it.
+                        var withoutHeading = link
+                        withoutHeading.heading = nil
+                        if before.resolve(withoutHeading, from: note) != .resolved(target) {
+                            rewritten.heading = nil
+                        }
+                    }
+                    // Write only what reads back as a link to the same note: a title with "#", "|" or "]]"
+                    // in it can't be written as a wiki link.
+                    let written = rewritten.written
+                    let reread = MarkdownScanner.scan(written).links
+                    guard reread.count == 1, reread[0].range.length == (written as NSString).length,
+                        case .wiki(let readBack) = reread[0].target,
+                        after.resolve(readBack, from: noteAfter) == .resolved(targetAfter)
+                    else { continue }
+                    edits.append(LinkEdit(note: noteAfter, range: span.range, replacement: written))
                 case .markdown(let destination, _):
                     guard let range = span.destinationRange,
                         case .resolved(let target) = before.resolve(markdownDestination: destination, from: note)

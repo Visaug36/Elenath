@@ -373,4 +373,62 @@ struct LibraryCatalogTests {
             try await reopened.createSpace(named: "More")
         }
     }
+
+    // MARK: - From the review
+
+    @Test func aCopiedSpaceFolderBecomesASpaceOfItsOwn() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let uni = try await fixture.space("Uni", sealed: true)
+        try fixture.write("x\n", to: "Uni/Lecture.md")
+        try FileManager.default.copyItem(at: fixture.url("Uni"), to: fixture.url("Uni copy"))
+        let catalog = LibraryCatalog(
+            root: fixture.root, safetyDirectory: fixture.safety, fileSystem: fixture.fileSystem,
+            timeSource: fixture.clock)
+        let snapshot = try await catalog.open()
+        #expect(snapshot.spaces.map(\.name).sorted() == ["Uni", "Uni copy"])
+        #expect(snapshot.spaces.first { $0.name == "Uni" }?.id == uni.id)
+        let copy = try #require(snapshot.spaces.first { $0.name == "Uni copy" })
+        #expect(copy.id != uni.id)
+        #expect(copy.isSealed)
+        // The copy keeps its new identity the next time.
+        let again = LibraryCatalog(
+            root: fixture.root, safetyDirectory: fixture.safety, fileSystem: fixture.fileSystem,
+            timeSource: fixture.clock)
+        #expect(try await again.open().spaces.first { $0.name == "Uni copy" }?.id == copy.id)
+    }
+
+    @Test func aSpaceRestoredFromAnOldBackupStaysSealed() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        var redCross = try await fixture.space("Red Cross")
+        fixture.clock.advance(by: 3600)
+        redCross.isSealed = true
+        try await fixture.catalog.update(redCross)
+        // The library is copied to another Mac, where there are no safety copies, and space.json is damaged.
+        try Data("{ damaged".utf8).write(to: fixture.url("Red Cross/.space/space.json"))
+        let otherMac = fixture.folder.child("OtherMacSafety")
+        let catalog = LibraryCatalog(
+            root: fixture.root, safetyDirectory: otherMac, fileSystem: fixture.fileSystem, timeSource: fixture.clock)
+        let snapshot = try await catalog.open()
+        #expect(snapshot.spaces.first?.isSealed == true)
+    }
+
+    @Test func aSpaceRestoredFromAnOldUnsealedBackupIsSealedUntilDecided() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let ideas = try await fixture.space("Ideas")
+        fixture.clock.advance(by: 3600)
+        var changed = ideas
+        changed.description = "Changed later"
+        try await fixture.catalog.update(changed)
+        try Data("{ damaged".utf8).write(to: fixture.url("Ideas/.space/space.json"))
+        let catalog = LibraryCatalog(
+            root: fixture.root, safetyDirectory: fixture.folder.child("Elsewhere"), fileSystem: fixture.fileSystem,
+            timeSource: fixture.clock)
+        let snapshot = try await catalog.open()
+        #expect(snapshot.spaces.first?.isSealed == true)
+        #expect(snapshot.sealedByDefault == [ideas.id])
+        #expect(snapshot.recoveries.count == 1)
+    }
 }

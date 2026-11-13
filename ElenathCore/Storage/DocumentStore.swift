@@ -224,6 +224,13 @@ public actor DocumentStore<Document: VersionedDocument> {
     /// successful `load()` or `create(_:)` first, the existing file is checked: one from a newer
     /// Elenath makes the store read-only, and a damaged one is set aside like in `load()`.
     public func save(_ document: Document) throws {
+        try save(document, backingUpNewVersion: false)
+    }
+
+    /// Saves the document like `save(_:)`. With `backingUpNewVersion`, the new file is also copied into
+    /// `backups/` at once, whatever the interval: for a change that must survive the loss of the file
+    /// even on a Mac without the safety copy (sealing a space).
+    public func save(_ document: Document, backingUpNewVersion: Bool) throws {
         guard !isReadOnly else { throw DocumentStoreError.readOnly }
         guard fileSystem.isDirectory(at: owner) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSURLErrorKey: owner])
@@ -239,6 +246,9 @@ public actor DocumentStore<Document: VersionedDocument> {
         knownDocumentID = document.documentID
         loadedSchemaVersion = Document.currentSchemaVersion
         writeSafetyCopy(data, documentID: document.documentID)
+        if backingUpNewVersion {
+            writeBackup(now: now)
+        }
     }
 
     // MARK: - Helpers
@@ -309,6 +319,13 @@ public actor DocumentStore<Document: VersionedDocument> {
         let existing = backupFiles()
         let hasRecentBackup = existing.contains { abs(now.timeIntervalSince($0.date)) < backupInterval }
         guard afterMigration || !hasRecentBackup else { return }
+        writeBackup(now: now)
+    }
+
+    /// Copies the file into `backups/` now, then prunes.
+    private func writeBackup(now: Date) {
+        guard maxBackups > 0, fileSystem.fileExists(at: file) else { return }
+        let existing = backupFiles()
         // Within one second, number past every backup already there (even after older ones were pruned),
         // so the new backup always sorts newest and pruning never removes it.
         let stamp = DocumentStoreTimestamp.string(from: now)

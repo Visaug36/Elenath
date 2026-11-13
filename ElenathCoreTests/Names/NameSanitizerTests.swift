@@ -26,7 +26,20 @@ struct NameSanitizerTests {
 
     @Test func charactersOtherPlatformsForbidAreKept() {
         #expect(NameSanitizer.sanitizedTitle("What is entropy?") == "What is entropy?")
-        #expect(NameSanitizer.sanitizedTitle("a*b \"c\" <d>|e\\f") == "a*b \"c\" <d>|e\\f")
+        #expect(NameSanitizer.sanitizedTitle("a*b \"c\" <d>e\\f") == "a*b \"c\" <d>e\\f")
+    }
+
+    @Test func charactersThatWouldBreakALinkBecomeHyphens() {
+        // "[[C# notes]]" would read as the note "C" and its heading " notes".
+        #expect(NameSanitizer.sanitizedTitle("C# notes") == "C- notes")
+        #expect(NameSanitizer.sanitizedTitle("a|b [c] ^d") == "a-b -c- -d")
+    }
+
+    @Test func conflictTitlesOfLongNamesFitInAFileName() {
+        let long = String(repeating: "a", count: 240)
+        let title = NameSanitizer.conflictTitle(for: long, now: Date(timeIntervalSince1970: 0), timeZone: .gmt)
+        #expect(title.utf8.count <= 200)
+        #expect(title.hasSuffix(" (conflict 1970-01-01 00.00)"))
     }
 
     @Test func longTitlesAreCutOnCharacterBoundaries() {

@@ -177,7 +177,7 @@ struct IndexFilter: Sendable {
 /// `Reach` which databases a question may read.
 final class SpaceIndex {
     /// A database written with another version is emptied and filled again.
-    static let schemaVersion: Int64 = 1
+    static let schemaVersion: Int64 = 2
 
     let container: Container
     private let database: SQLiteDatabase
@@ -343,16 +343,27 @@ final class SpaceIndex {
             "INSERT INTO note_trigram (rowid, title, body) VALUES (?, ?, ?)",
             [id, .text(record.path.title), .text(record.body)])
         for link in record.links {
-            try database.run(
-                """
-                INSERT INTO links (source, target, title_key, heading, is_embed, is_markdown, location, length, context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    id, .text(link.target), .text(link.titleKey), .optional(link.heading), .bool(link.isEmbed),
-                    .bool(link.isMarkdown), .integer(Int64(link.location)), .integer(Int64(link.length)),
-                    .text(link.context),
-                ])
+            // "[[C# notes]]" may name the note "C" (heading " notes") or, when there is no "C", the note
+            // "C# notes": it is found under both titles, and resolving tells which it is.
+            var keys = [link.titleKey]
+            if !link.isMarkdown, let heading = link.heading,
+                let whole = WikiLink(target: link.target + "#" + heading).targetComponents.last.map(NameSanitizer.key),
+                whole != link.titleKey
+            {
+                keys.append(whole)
+            }
+            for key in keys {
+                try database.run(
+                    """
+                    INSERT INTO links (source, target, title_key, heading, is_embed, is_markdown, location, length, context)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        id, .text(link.target), .text(key), .optional(link.heading), .bool(link.isEmbed),
+                        .bool(link.isMarkdown), .integer(Int64(link.location)), .integer(Int64(link.length)),
+                        .text(link.context),
+                    ])
+            }
         }
         for tag in record.tags {
             try database.run(
@@ -607,6 +618,19 @@ final class SpaceIndex {
             }
         }
         return result
+    }
+
+    /// The title keys (file names, for attachments) that a note links to and that some other note in
+    /// this database links to as well.
+    func linkKeysShared(with path: ItemPath) throws -> Set<String> {
+        let rows = try database.query(
+            """
+            SELECT DISTINCT l.title_key FROM links l JOIN notes n ON n.id = l.source
+            WHERE n.path_key != ?1 AND l.title_key IN (
+                SELECT mine.title_key FROM links mine JOIN notes me ON me.id = mine.source WHERE me.path_key = ?1)
+            """, [.text(NameSanitizer.key(path.description))]
+        ) { $0.string(0) }
+        return Set(rows)
     }
 
     /// Every tag as first written, with how many notes have it.

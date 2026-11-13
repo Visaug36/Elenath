@@ -167,7 +167,19 @@ public actor LibraryCatalog {
         var sealedByDefault: [SpaceID] = []
         for name in spaceFolderNames() {
             let knownID = known[NameSanitizer.key(name)]
-            let result = await loadSpace(folderName: name, knownID: knownID, libraryID: library.id)
+            var result = await loadSpace(folderName: name, knownID: knownID, libraryID: library.id)
+            let id = result.entry.space.id
+            if let other = found[id] {
+                // Two folders with one space.json: a folder copied in Finder. The one Elenath knew keeps
+                // the id, the other becomes a space of its own, sealed if the original was.
+                if knownID == id, known[NameSanitizer.key(other.space.name)] != id {
+                    found[id] = nil
+                    let moved = await giveNewIdentity(to: other, libraryID: library.id)
+                    found[moved.space.id] = moved
+                } else {
+                    result.entry = await giveNewIdentity(to: result.entry, libraryID: library.id)
+                }
+            }
             found[result.entry.space.id] = result.entry
             if let recovery = result.recovery {
                 recoveries.append(recovery)
@@ -224,7 +236,8 @@ public actor LibraryCatalog {
         let document = SpaceDocument(
             id: space.id, color: space.color, symbol: space.symbol, sealed: space.isSealed,
             description: space.description, keywords: space.keywords)
-        try await entry.store.save(document)
+        // A change of sealing is backed up at once, so a backup never holds an older seal than the space.
+        try await entry.store.save(document, backingUpNewVersion: space.isSealed != entry.space.isSealed)
         entry.space = Self.space(named: entry.space.name, from: document, isReadOnly: false)
         entries[space.id] = entry
     }
@@ -425,7 +438,23 @@ public actor LibraryCatalog {
         let store = makeSpaceStore(folder: folder, knownID: knownID, libraryID: libraryID)
         do {
             let load = try await store.load()
-            let space = Self.space(named: folderName, from: load.document, isReadOnly: isReadOnly)
+            var space = Self.space(named: folderName, from: load.document, isReadOnly: isReadOnly)
+            // A backup can be older than the last change of sealing. A space restored from one counts as
+            // sealed until the user decides; the safety copy is always the newest state.
+            if case .backup = load.recovery?.source, !space.isSealed {
+                space.isSealed = true
+                if !isReadOnly {
+                    var document = load.document
+                    document.sealed = true
+                    do {
+                        try await store.save(document, backingUpNewVersion: true)
+                    } catch {
+                        log.error("Could not seal a restored space", private: String(describing: error))
+                    }
+                }
+                return LoadedSpace(
+                    entry: Entry(space: space, store: store), recovery: load.recovery, sealedByDefault: true)
+            }
             return LoadedSpace(
                 entry: Entry(space: space, store: store), recovery: load.recovery, sealedByDefault: false)
         } catch DocumentStoreError.missing where knownID == nil {
@@ -455,6 +484,26 @@ public actor LibraryCatalog {
             log.error("A space.json could not be read or restored", private: String(describing: error))
             return sealedSpace(folderName: folderName, id: knownID, store: store, isReadOnly: isReadOnly)
         }
+    }
+
+    /// A space whose folder is a copy of another space's: a new id, the same settings, written to its
+    /// space.json unless the library is read-only.
+    private func giveNewIdentity(to entry: Entry, libraryID: LibraryID) async -> Entry {
+        var space = entry.space
+        space.id = SpaceID()
+        let folder = root.appending(component: space.name, directoryHint: .isDirectory)
+        let store = makeSpaceStore(folder: folder, knownID: space.id, libraryID: libraryID)
+        if !isReadOnly, !space.isReadOnly {
+            let document = SpaceDocument(
+                id: space.id, color: space.color, symbol: space.symbol, sealed: space.isSealed,
+                description: space.description, keywords: space.keywords)
+            do {
+                try await store.save(document, backingUpNewVersion: true)
+            } catch {
+                log.error("Could not give a copied space its own id", private: String(describing: error))
+            }
+        }
+        return Entry(space: space, store: store)
     }
 
     private func sealedSpace(

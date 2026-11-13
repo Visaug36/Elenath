@@ -149,6 +149,7 @@ struct SealingLeakTests {
                     found.append(backlink.source.note.path.description)
                 }
                 found += try await retrieval.linkingNotes(to: note).map(\.path.description)
+                found += try await retrieval.attachmentNamesShared(by: note)
                 if let hit = try await retrieval.note(note) {
                     found += [hit.title, hit.preview]
                 }

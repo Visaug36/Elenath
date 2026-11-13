@@ -269,3 +269,52 @@ struct LinkRewriterBatchTests {
                 == "[[University/Summary]] [[University/Maths/Lecture 7#Part|that]] [[Reading list]]")
     }
 }
+
+@Suite("Link rewriting with titles made outside Elenath")
+struct LinkRewriterSpecialTitleTests {
+    private static func wikiLinks(in body: String) -> [WikiLink] {
+        MarkdownScanner.scan(body).links.compactMap { span in
+            if case .wiki(let link) = span.target { return link }
+            return nil
+        }
+    }
+
+    @Test("A new title that can't be written as a wiki link leaves the links as they were")
+    func titleThatBreaksLinks() {
+        let space = SpaceID()
+        func ref(_ path: String) -> NoteRef { NoteRef(container: .space(space), path: ItemPath(path)!) }
+        let other = ref("C.md")
+        let old = ref("Old.md")
+        let linker = ref("Linker.md")
+        for newTitle in ["C# notes", "C|D"] {
+            let new = ref("\(newTitle).md")
+            let catalog = TitleCatalog(notes: [other, old, linker])
+            let before = LinkResolver(catalog: catalog, spaceNames: [space: "Uni"])
+            let after = LinkResolver(catalog: catalog.replacing(old, with: new), spaceNames: [space: "Uni"])
+            let body = "See [[Old]] and [[Old#Intro]].\n"
+            let edits = LinkRewriter.edits(
+                forMoving: old, to: new, notes: [(note: linker, body: body)], before: before, after: after)
+            let rewritten = LinkRewriter.apply(edits, to: body)
+            // Never a link that now points at "C".
+            for link in Self.wikiLinks(in: rewritten) {
+                #expect(after.resolve(link, from: linker) != .resolved(other), "\(link.written)")
+            }
+        }
+    }
+
+    @Test("Renaming a note whose title has # in it drops the heading that was part of the title")
+    func renameFromHashTitle() {
+        let space = SpaceID()
+        func ref(_ path: String) -> NoteRef { NoteRef(container: .space(space), path: ItemPath(path)!) }
+        let old = ref("C# notes.md")
+        let new = ref("C sharp.md")
+        let linker = ref("Linker.md")
+        let catalog = TitleCatalog(notes: [old, linker])
+        let before = LinkResolver(catalog: catalog, spaceNames: [:])
+        let after = LinkResolver(catalog: catalog.replacing(old, with: new), spaceNames: [:])
+        let body = "See [[C# notes]] and [[C# notes|the notes]].\n"
+        let edits = LinkRewriter.edits(
+            forMoving: old, to: new, notes: [(note: linker, body: body)], before: before, after: after)
+        #expect(LinkRewriter.apply(edits, to: body) == "See [[C sharp]] and [[C sharp|the notes]].\n")
+    }
+}

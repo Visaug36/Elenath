@@ -1,5 +1,7 @@
 import AppKit
 import ElenathCore
+import ImageIO
+import PDFKit
 import SwiftUI
 
 /// The editor's text view, wrapped for SwiftUI.
@@ -625,6 +627,8 @@ final class ActionMenuItem: NSMenuItem {
     }
 
     @objc private func run() {
-        handler()
+        MainActor.assumeIsolated {
+            handler()
+        }
     }
 }

@@ -11,8 +11,9 @@ Elenath is one Xcode project with three targets:
 `ElenathCore` is static so ad-hoc-signed builds don't trip hardened-runtime library validation.
 
 This document is the contract. Each module's API is written here first, then implemented against it, reviewed
-independently and integrated; CI on the pushed branch is the judge. **Sections marked "contract" are not built
-yet.** They describe version 0.1 (Phase 2).
+independently and integrated; CI on the pushed branch is the judge. Everything below is built for version 0.1
+(Phase 2) unless it says otherwise. The signatures show the shape of each API; the code's documentation
+comments are the detail.
 
 ## Rules that apply everywhere
 
@@ -69,7 +70,7 @@ public protocol FileSystem: Sendable {
 public struct LocalFileSystem: FileSystem { public init() }
 ```
 
-Contract, added in Phase 2:
+Added in Phase 2:
 
 ```swift
 public struct FileIdentity: Hashable, Sendable { }           // volume and file number: survives a rename
@@ -92,7 +93,7 @@ public struct CoreLog: Sendable {
 
 `CoreLog` has no way to log a dynamic value publicly, so the privacy rule can't be broken by accident.
 
-## Model (`ElenathCore/Model`): contract
+## Model (`ElenathCore/Model`): built
 
 ```swift
 public struct LibraryID: Hashable, Sendable, Codable { public var rawValue: UUID }
@@ -143,7 +144,7 @@ public struct NoteRef: Hashable, Sendable {
 All model types are `Sendable` and `Hashable`. A note's identity for the app is its `NoteRef`; the `NoteID` in
 its front matter is what lets the index follow it when the file moves outside Elenath.
 
-## Names (`ElenathCore/Names`): contract
+## Names (`ElenathCore/Names`): built
 
 ```swift
 public enum NameSanitizer {
@@ -167,7 +168,7 @@ public enum UniqueName {
 
 The rules are the "Names" section of docs/FORMAT.md. Sanitizing follows Ithil's `FolderNaming.sanitizedTitle`.
 
-## Storage (`ElenathCore/Storage`): contract
+## Storage (`ElenathCore/Storage`): built
 
 `library.json` and `space.json` are saved by one generic store, which is Ithil's `LibraryStore` with the
 document type taken out.
@@ -233,6 +234,11 @@ public enum LibraryFolderPolicy {                      // Ithil's RootFolderPoli
 public enum LibraryMove {
     public static func move(from oldRoot: URL, to newRoot: URL, fileSystem: any FileSystem) throws
 }
+/// What a batch of FSEvents paths means: noise, a container's index to refresh, a note to look at again,
+/// or the catalog to open again.
+public enum LibraryPathClassifier {
+    public static func classify(paths: [String], rootPath: String, spaces: [Space]) -> LibraryChange
+}
 ```
 
 - Loading, saving, backups, the safety copy, recovery and newer schemas behave exactly as described in
@@ -241,8 +247,8 @@ public enum LibraryMove {
   missing.
 - **Choosing a folder:** an empty folder or an existing library is used as is. Any other folder gets an
   `Elenath` subfolder (`Elenath 2`… if that name is taken by something else).
-- `LibraryMove` moves everything in the library folder, `.elenath` last, and moves everything back if one item
-  fails.
+- `LibraryMove` moves the spaces' folders and the Inbox, then `.elenath` last, leaves loose files, and moves
+  everything back if one item fails.
 
 ### The library on disk
 
@@ -260,7 +266,7 @@ public struct FolderListing: Sendable {
     public var files: [FileEntry]                     // other documents
 }
 
-public actor LibraryCatalog {                              // built
+public actor LibraryCatalog {
     public init(root: URL, safetyDirectory: URL, knownLibraryID: LibraryID? = nil,
                 fileSystem: any FileSystem, timeSource: any TimeSource,
                 backupInterval: TimeInterval = 15 * 60, maxBackups: Int = 50)
@@ -295,7 +301,7 @@ public enum LibraryCatalogError: Error, Equatable, Sendable {
 - Sealing a space, or unsealing one, is `update(_:)`. The index needs no rebuild: each space has its own
   database, and `Reach` decides at query time what may be read.
 
-## Notes (`ElenathCore/Notes`): contract
+## Notes (`ElenathCore/Notes`): built
 
 ```swift
 public enum LineEnding: Sendable { case lf, crlf }
@@ -351,20 +357,28 @@ public enum SaveOutcome: Sendable {
 
 public actor NoteStore {
     public init(catalog: LibraryCatalog, fileSystem: any FileSystem, timeSource: any TimeSource,
-                timeZone: @escaping @Sendable () -> TimeZone)
-    public func read(_ ref: NoteRef) throws -> LoadedNote
-    public func save(_ text: NoteText, to ref: NoteRef, expecting stamp: DiskStamp) throws -> SaveOutcome
-    public func create(title: String, in folder: ItemPath, container: Container, kind: NoteKind,
-                       body: String) throws -> LoadedNote
-    public func rename(_ ref: NoteRef, to title: String) throws -> NoteRef
-    public func move(_ ref: NoteRef, to folder: ItemPath, in container: Container) throws -> NoteRef
-    public func trash(_ ref: NoteRef) throws -> URL?
-    public func restore(from trashed: URL, to ref: NoteRef) throws -> NoteRef      // Undo of a delete
-    public func createFolder(named name: String, in folder: ItemPath, container: Container) throws -> ItemPath
-    public func renameFolder(_ folder: ItemPath, in container: Container, to name: String) throws -> ItemPath
-    public func trashFolder(_ folder: ItemPath, in container: Container) throws -> URL?
-    public func addAttachments(_ sources: [URL], to ref: NoteRef,
-                               progress: @escaping @Sendable (FileCopyProgress) -> Void) async throws -> [ItemPath]
+                timeZone: @escaping @Sendable () -> TimeZone = { .current },
+                makeID: @escaping @Sendable () -> NoteID = { NoteID() })
+    public func read(_ ref: NoteRef) async throws -> LoadedNote
+    public func save(_ text: NoteText, to ref: NoteRef, expecting stamp: DiskStamp) async throws -> SaveOutcome
+    public func create(title: String, in folder: ItemPath, container: Container, kind: NoteKind = .note,
+                       body: String = "", created: Date? = nil) async throws -> LoadedNote
+    public func importNote(from source: URL, title: String, in folder: ItemPath, container: Container) async throws -> NoteRef
+    public func importFiles(_ sources: [URL], into folder: ItemPath, container: Container,
+                            progress: ...) async throws -> [ItemPath]
+    public func rename(_ ref: NoteRef, to title: String) async throws -> NoteRef
+    public func move(_ ref: NoteRef, to folder: ItemPath, in container: Container,
+                     sharedAttachments: Set<String>? = nil) async throws -> NoteRef
+    public func moveItem(_ path: ItemPath, in container: Container, to folder: ItemPath,
+                         in destination: Container) async throws -> ItemPath
+    public func trash(_ ref: NoteRef) async throws -> URL?
+    public func trashItem(_ path: ItemPath, in container: Container) async throws -> URL?
+    public func restore(from trashed: URL, to path: ItemPath, in container: Container) async throws -> ItemPath
+    public func createFolder(named name: String, in folder: ItemPath, container: Container) async throws -> ItemPath
+    public func renameFolder(_ folder: ItemPath, in container: Container, to name: String) async throws -> ItemPath
+    public func addAttachments(_ sources: [URL], to ref: NoteRef, progress: ...) async throws -> [ItemPath]
+    public func addAttachment(_ data: Data, named name: String, to ref: NoteRef) async throws -> ItemPath
+    public func attachmentURL(named name: String, for ref: NoteRef) async -> URL?
 }
 ```
 
@@ -375,13 +389,16 @@ public actor NoteStore {
   beside it, and the outcome says so. Nothing is ever picked silently.
 - **First edit of a foreign note** adds `id` and `created` to its front matter (docs/FORMAT.md).
 - **Rename and move** change the file only. The links that point to it are rewritten by the caller with
-  `LinkRewriter`, in the same undo step. A move carries the attachments that only this note uses.
+  `LinkRewriter`, in the same undo step. A move takes the note's attachments along: moved when the index says
+  no other note uses them (`Retrieval.attachmentNamesShared(by:)`), copied otherwise.
+- **A folder never holds two notes with one title**, whatever their extensions, since a link couldn't tell
+  them apart. A second "Lecture 7" is "Lecture 7 2", never "Lecture 8".
 - **Attachments** are copied under a hidden temporary name and renamed into place when complete, with
   Finder-style numbers on clashes (Ithil's `FileImport`). Originals are never moved.
 - **A note that can't be saved** (the folder is gone, the disk is full) is never dropped: the app keeps the
   text, writes it to `Recovery/` in its container, says what happened and retries.
 
-## Markdown (`ElenathCore/Markdown`): contract
+## Markdown (`ElenathCore/Markdown`): built
 
 A small scanner of our own: the editor needs source ranges for every construct, which Foundation's Markdown
 parsing doesn't give. Ranges are UTF-16 offsets into the body, the unit the text view uses.
@@ -417,7 +434,7 @@ public enum MarkdownScanner {
   state at a line's end equals what it was before the edit. A 1 MB note never rescans whole on a keystroke.
 - Tags and tasks follow docs/FORMAT.md.
 
-## Links (`ElenathCore/Links`): contract
+## Links (`ElenathCore/Links`): built
 
 ```swift
 public struct WikiLink: Hashable, Sendable {
@@ -460,7 +477,7 @@ public enum LinkRewriter {
 - When a file is renamed or moved outside Elenath, the indexer recognizes it (by `id`, else by file identity,
   else by content hash) and the same rewrite is offered as one step.
 
-## Index and retrieval (`ElenathCore/Index`): contract
+## Index and retrieval (`ElenathCore/Index`): built
 
 The index is a cache that can be rebuilt at any time: one SQLite database per space and one for the Inbox,
 in Elenath's container (`Index/<library id>/<space id>.sqlite`), never inside the library. SQLite is the
@@ -523,6 +540,13 @@ public actor Retrieval {
     public func openTasks(from workplace: Workplace, limit: Int) async throws -> [TaskHit]
     public func recentNotes(from workplace: Workplace, limit: Int) async throws -> [NoteHit]
     public func linkingNotes(to note: NoteRef) async throws -> [NoteRef]     // for LinkRewriter
+    public func notesLinking(throughFolderNamed name: String, from workplace: Workplace) async throws -> [NoteRef]
+    public func linkContext(for container: Container) async throws -> LinkContext  // resolve many links at once
+    public func attachmentNamesShared(by note: NoteRef) async throws -> Set<String>
+    public func notes(in folder: ItemPath, of container: Container) async throws -> [NoteHit]
+    public func folders(of container: Container, from workplace: Workplace) async throws -> [ItemPath]
+    public func note(_ note: NoteRef) async throws -> NoteHit?
+    public func hasDuplicatedIdentity(_ note: NoteRef) async throws -> Bool
     public func text(of note: NoteRef, from workplace: Workplace) async throws -> String?   // nil outside the reach
     public func inboxCount() async throws -> Int                             // a number, never content
     public func filingDestinations() async -> [FilingDestination]
@@ -573,7 +597,7 @@ public actor Indexer {
 - Each database records its schema version; a different one means the database is dropped and rebuilt.
 - One writer (the indexer) and many readers per database (WAL mode).
 
-## Capture (`ElenathCore/Capture`): contract
+## Capture (`ElenathCore/Capture`): built
 
 ```swift
 public enum CaptureDestination: Hashable, Sendable {
@@ -596,7 +620,7 @@ public struct CaptureParser: Sendable {
   longest match wins. Anything else goes to the Inbox.
 - A pasted link stays a link. Elenath can't fetch pages.
 
-## Import (`ElenathCore/Import`): contract
+## Import (`ElenathCore/Import`): built
 
 ```swift
 public indirect enum ImportItem: Hashable, Sendable {
@@ -640,7 +664,7 @@ public enum ChatExport {
 - Folders keep their structure. Clashes get Finder-style numbers. Cancelling leaves what is already done.
 - docs/IMPORT.md has the steps for each place notes come from.
 
-## Demo (`ElenathCore/Demo`): contract
+## Demo (`ElenathCore/Demo`): built
 
 ```swift
 public enum DemoLibrary {

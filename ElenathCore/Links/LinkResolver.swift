@@ -52,6 +52,11 @@ public struct TitleCatalog: Sendable {
         return copy
     }
 
+    /// Every note in the catalog, in no particular order.
+    public var notes: [NoteRef] {
+        entries.values.flatMap { $0.map(\.ref) }
+    }
+
     public func contains(_ note: NoteRef) -> Bool {
         entries[NameSanitizer.key(note.title)]?.contains { $0.ref == note } ?? false
     }

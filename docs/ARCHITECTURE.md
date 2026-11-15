@@ -395,7 +395,10 @@ public actor NoteStore {
   them apart. A second "Lecture 7" is "Lecture 7 2", never "Lecture 8".
 - **Attachments** are copied under a hidden temporary name and renamed into place when complete, with
   Finder-style numbers on clashes (Ithil's `FileImport`). Originals are never moved.
-- **A note that can't be saved** (the folder is gone, the disk is full) is never dropped: the app keeps the
+- **A vanished space or library is never brought back.** Saving a note whose file is gone writes it again,
+  but only while its space's folder (for the Inbox, the library's folder) is there; otherwise `save` and
+  `create` throw `notFound` and write nothing.
+- **A note that can't be saved** (the disk is full, the drive is gone) is never dropped: the app keeps the
   text, writes it to `Recovery/` in its container, says what happened and retries.
 
 ## Markdown (`ElenathCore/Markdown`): built
@@ -774,6 +777,21 @@ func relocateFolder(_ chosen: URL)                   // only an existing library
   not hidden. Only the lines the scanner reports as changed are restyled.
 - **Autosave** 0.5 s after the last change, and at once when the note loses focus, another note opens, the
   window closes or the app quits.
+- **`EditorSession` owns the text when no view does.** The text view registers with `attachTextView`; the
+  session reads it on every save and, synchronously, whenever the view may go away (`captureText` when the
+  note closes, `detachTextView` when the view is taken down). A text view made later (the window opened
+  again) shows the newest text, and a save after the view is gone still has every keystroke.
+- **Elenath's own steps hold the open note.** `AppModel.run` calls `beginStep` (save what was typed, then
+  write nothing) and `endStep` (show what the step did to the file; save what was typed meanwhile where the
+  note is now). A step that moves the open note calls `follow(to:)`; one that trashes it calls
+  `noteWasTrashed()`, and the note is never written back.
+- **Nothing typed is dropped when a note closes or the app quits** (`saveEverything`): edits to a note whose
+  file, space or library vanished become "Title (conflict …)" in the Inbox; edits that can't be written at
+  all go to `Recovery/` with the time in their name, and the next time the library opens an alert offers to
+  put them in the Inbox (each copy then goes to the Trash). Quitting waits at most five seconds; indexing is
+  never waited for.
+- **Moving the library** closes the open note, refuses while a step runs, and pauses the watcher, so files
+  leaving don't look like changes; nothing can be edited, captured or imported meanwhile.
 - Writing direction is natural per paragraph, so right-to-left and mixed text work.
 - ⌘F is the text view's own find bar. `[[` opens a completion list fed by `Retrieval.titles`.
 

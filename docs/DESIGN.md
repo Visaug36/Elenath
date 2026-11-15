@@ -194,6 +194,11 @@ All", and its folders and notes. A folder's page has the folder's name and the s
 
 VoiceOver reads a space row as "Uni, space" or "Red Cross, sealed space", and the Inbox as "Inbox, 3 items".
 
+**Alerts about kept edits.** When the library opens with edits kept in Recovery: "Elenath kept edits it
+couldn't save" / "2 notes couldn't be saved before Elenath closed. The text is safe: put it in the Inbox to look
+at it." with Put Them in the Inbox (default) and Later. When a note closes with edits that couldn't go where it
+was, the "That didn't work" alert says where they went ("They are in the Inbox as “Plan (conflict …)”").
+
 **Banners at the foot of the window** (`BackgroundSidebar`, a `SeparatorLine` on top, 12.5 pt `TextSecondary`):
 
 - *Read-only* (`lock.fill` in `AccentText`): the library was saved by a newer Elenath.

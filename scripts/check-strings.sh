@@ -27,23 +27,52 @@ if ! xcrun xcstringstool sync "$work/Localizable.xcstrings" "${args[@]}"; then
     exit 1
 fi
 
-python3 - "$catalog" "$work/Localizable.xcstrings" <<'PY'
+python3 - "$catalog" "$work/Localizable.xcstrings" "${args[@]}" <<'PY'
 import json
 import sys
 
 before = json.load(open(sys.argv[1]))["strings"]
 after = json.load(open(sys.argv[2]))["strings"]
 missing = sorted(set(after) - set(before))
-unused = sorted(
-    key for key, entry in after.items()
-    if entry.get("extractionState") == "stale" and before.get(key, {}).get("extractionState") != "stale"
-)
+
+# Every key the code uses, from the .stringsdata files (JSON): a key in the catalog that none of them has is
+# left over from code that changed.
+used = set()
+readable = True
+for path in sys.argv[3:]:
+    if path == "--stringsdata":
+        continue
+    try:
+        data = json.load(open(path))
+    except (OSError, ValueError):
+        readable = False
+        break
+    tables = data.get("tables") if isinstance(data, dict) else None
+    if not isinstance(tables, dict):
+        readable = False
+        break
+    for entries in tables.values():
+        if isinstance(entries, list):
+            used.update(entry["key"] for entry in entries if isinstance(entry, dict) and "key" in entry)
+if readable and used:
+    unused = sorted(set(before) - used)
+else:
+    print("notice: The .stringsdata files aren't JSON; unused strings are judged by Xcode's stale marks only.")
+    unused = sorted(
+        key for key, entry in after.items()
+        if entry.get("extractionState") == "stale" and before.get(key, {}).get("extractionState") != "stale"
+    )
 for key in unused:
     print(f"::warning::Unused string in the catalog: {key!r}")
+    print("UNUSED " + json.dumps(key, ensure_ascii=False))
 if missing:
     print(f"::error::{len(missing)} string(s) used in code are missing from {sys.argv[1]}:")
     for key in missing:
         print(f"  {key!r}")
+    # The entries as Xcode extracted them, one JSON object per line, to paste into the catalog.
+    print("Missing entries:")
+    for key in missing:
+        print("ENTRY " + json.dumps({key: after[key]}, ensure_ascii=False))
     sys.exit(1)
 print(f"All {len(after)} strings are in the catalog.")
 PY

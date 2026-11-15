@@ -11,5 +11,6 @@ throwaway settings, in British English. Your own notes, folder and settings are 
   `scripts/screenshots/capture.sh path/to/Elenath.app docs/images`. macOS asks Terminal for Screen Recording
   permission the first time. It quits any running Elenath before each shot.
 
-The scenes come from the demo launch arguments (see `Elenath/App/DemoScene.swift`): `-demoAppearance night|dawn`
-and `-demoWindowSize 1280x800`.
+The scenes come from the demo launch arguments (see `Elenath/App/DemoScene.swift`): `-demoAppearance night|dawn`,
+`-demoWindowSize 1280x800`, `-demoNow 2026-11-10T14:30` (a pinned clock, so dates don't change between runs) and
+`-demoScene today|note|inbox|space|search|sealed|capture|onboarding`.

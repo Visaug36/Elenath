@@ -74,6 +74,41 @@ struct FaultyFileSystem: FileSystem {
     func removeItem(at url: URL) throws { try base.removeItem(at: url) }
     func trashItem(at url: URL) throws { try base.trashItem(at: url) }
     func modificationDate(at url: URL) -> Date? { base.modificationDate(at: url) }
+    func info(at url: URL) -> FileInfo? { base.info(at: url) }
+}
+
+/// A real file system with a Trash of its own, inside the test's temporary folder: each trashed item goes
+/// into a new subfolder there, so it keeps its name. Tests never touch the user's Trash, and it works on
+/// systems that have none.
+struct TrashingFileSystem: FileSystem {
+    let trash: URL
+    let base = LocalFileSystem()
+
+    init(trashIn folder: URL) {
+        trash = folder.appending(component: "Trash", directoryHint: .isDirectory)
+    }
+
+    func fileExists(at url: URL) -> Bool { base.fileExists(at: url) }
+    func isDirectory(at url: URL) -> Bool { base.isDirectory(at: url) }
+    func contentsOfDirectory(at url: URL) throws -> [URL] { try base.contentsOfDirectory(at: url) }
+    func createDirectory(at url: URL) throws { try base.createDirectory(at: url) }
+    func readData(at url: URL) throws -> Data { try base.readData(at: url) }
+    func writeAtomically(_ data: Data, to url: URL) throws { try base.writeAtomically(data, to: url) }
+    func copyItem(at source: URL, to destination: URL) throws { try base.copyItem(at: source, to: destination) }
+    func moveItem(at source: URL, to destination: URL) throws { try base.moveItem(at: source, to: destination) }
+    func removeItem(at url: URL) throws { try base.removeItem(at: url) }
+    func trashItem(at url: URL) throws { _ = try trashItemReturningURL(at: url) }
+
+    func trashItemReturningURL(at url: URL) throws -> URL? {
+        let slot = trash.appending(component: UUID().uuidString, directoryHint: .isDirectory)
+        try base.createDirectory(at: slot)
+        let destination = slot.appending(component: url.lastPathComponent)
+        try base.moveItem(at: url, to: destination)
+        return destination
+    }
+
+    func modificationDate(at url: URL) -> Date? { base.modificationDate(at: url) }
+    func info(at url: URL) -> FileInfo? { base.info(at: url) }
 }
 
 /// Small helpers for looking at what a test left on disk.

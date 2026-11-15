@@ -1,6 +1,7 @@
+import AppKit
 import SwiftUI
 
-/// General: appearance (Night, Dawn, Match System).
+/// General: appearance (Night, Dawn, Match System), the Quick Capture shortcut, and launch at login.
 struct GeneralSettingsView: View {
     @Environment(AppSettings.self) private var settings
 
@@ -10,11 +11,143 @@ struct GeneralSettingsView: View {
             Section("Appearance") {
                 AppearanceChooser(selection: $settings.appearance)
             }
+            QuickCaptureShortcutSection()
+            StartupSettingsSection()
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Color.backgroundWindow)
-        .frame(height: 190)
+        .frame(height: 430)
+    }
+}
+
+/// The global shortcut for Quick Capture, recorded like Ithil's Quick Add shortcut. While the recorder
+/// listens, the shortcut steps aside so the current one can be typed again.
+private struct QuickCaptureShortcutSection: View {
+    @Environment(AppSettings.self) private var settings
+    @State private var isRecording = false
+
+    private var hotKeys: QuickCaptureHotKeyController { .shared }
+
+    var body: some View {
+        @Bindable var settings = settings
+        Section {
+            LabeledContent("Quick Capture shortcut") {
+                HStack(spacing: 8) {
+                    HotKeyRecorder(Text("Quick Capture shortcut"), combo: $settings.quickCaptureHotKey) { recording in
+                        recordingChanged(recording)
+                    }
+                    Button("Reset") {
+                        settings.quickCaptureHotKey = .optionShiftSpace
+                    }
+                    .disabled(isRecording || settings.quickCaptureHotKey == .optionShiftSpace)
+                    .accessibilityLabel(Text("Reset Quick Capture Shortcut"))
+                    .accessibilityHint(Text("Sets the shortcut back to ⌥⇧Space"))
+                }
+            }
+        } footer: {
+            footer
+                .font(Typography.footnote)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private var footer: some View {
+        if isRecording {
+            Text("Press the new keys, with ⌘, ⌥ or ⌃ but not a menu shortcut. Esc cancels; ⌫ turns it off.")
+        } else if settings.quickCaptureHotKey == nil {
+            Text("Quick Capture has no shortcut. File › Quick Capture still opens it.")
+        } else if hotKeys.status == .unavailable {
+            Label {
+                Text("Another app is using this shortcut. Choose a different one.")
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .symbolRenderingMode(.multicolor)
+            }
+            .foregroundStyle(Color.textSecondary)
+        } else {
+            Text("Opens Quick Capture from any app. Ithil uses ⌥Space, so the two don't collide.")
+        }
+    }
+
+    private func recordingChanged(_ recording: Bool) {
+        isRecording = recording
+        if recording {
+            hotKeys.suspend()
+        } else {
+            hotKeys.resume()
+        }
+    }
+}
+
+/// "Launch at login", read from macOS whenever Settings appears or Elenath becomes active, since it can
+/// also be changed in System Settings.
+private struct StartupSettingsSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var launchStatus = LaunchAtLogin.Status.off
+    @State private var launchesAtLogin = false
+    @State private var launchChangeFailed = false
+
+    var body: some View {
+        Section {
+            Toggle("Launch at login", isOn: $launchesAtLogin)
+                .toggleStyle(.switch)
+                .tint(Color.accentColor)
+                .disabled(model.isDemo)
+                .onChange(of: launchesAtLogin) { _, wanted in
+                    changeLaunchAtLogin(to: wanted)
+                }
+                .onAppear {
+                    refreshLaunchStatus()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    refreshLaunchStatus()
+                }
+            if launchStatus == .requiresApproval, !model.isDemo {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("Switched off in System Settings › General › Login Items.")
+                        .font(Typography.secondary)
+                        .foregroundStyle(Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Open Login Items…") {
+                        LaunchAtLogin.openLoginItemsSettings()
+                    }
+                }
+            }
+        } footer: {
+            footer
+                .font(Typography.footnote)
+                .foregroundStyle(Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var footer: Text {
+        if model.isDemo {
+            return Text("Demo mode never changes your login items.")
+        }
+        if launchChangeFailed {
+            return Text("macOS didn't allow that. Add Elenath in System Settings › General › Login Items.")
+        }
+        return Text("Elenath opens quietly at login, so Quick Capture works from the start.")
+    }
+
+    private func refreshLaunchStatus() {
+        launchStatus = LaunchAtLogin.status
+        launchesAtLogin = launchStatus != .off
+    }
+
+    private func changeLaunchAtLogin(to wanted: Bool) {
+        guard !model.isDemo, wanted != (launchStatus != .off) else { return }
+        do {
+            try LaunchAtLogin.set(wanted)
+            launchChangeFailed = false
+        } catch {
+            launchChangeFailed = true
+        }
+        refreshLaunchStatus()
     }
 }
 

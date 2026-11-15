@@ -75,7 +75,8 @@ jobs:
         with:
           name: screenshots
           path: |
-            docs/images/window-*.png
+            docs/images/*-night.png
+            docs/images/*-dawn.png
             build/screenshot-logs
           if-no-files-found: ignore
 

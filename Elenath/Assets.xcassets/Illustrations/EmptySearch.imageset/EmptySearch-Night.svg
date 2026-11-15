@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100" height="96" viewBox="7.6 8 100 96">
+<defs><radialGradient id="lg"><stop offset="0" stop-color="#F2B45A" stop-opacity="0.42"/><stop offset="0.45" stop-color="#F2B45A" stop-opacity="0.231"/><stop offset="1" stop-color="#F2B45A" stop-opacity="0"/></radialGradient></defs>
+<circle cx="57.6" cy="60" r="39" fill="url(#lg)"/>
+<line x1="57.6" y1="11.6" x2="57.6" y2="21.6" stroke="#B88C58" stroke-width="2.3" stroke-linecap="round"/>
+<circle cx="57.6" cy="26.5" r="4.0" fill="none" stroke="#B88C58" stroke-width="1.9"/>
+<path d="M47.6 31.9 H67.6 L74.9 41.8 H40.3 Z" fill="#B88C58"/>
+<rect x="41.6" y="40.9" width="32" height="40.6" rx="5.4" fill="#B88C58"/>
+<rect x="43.8" y="42.9" width="27.6" height="36.3" rx="3.4" fill="#FFC66A"/>
+<path d="M57.6 50.6 C60.4 54.0 62.4 57.4 62.4 60.6 C62.4 63.8 60.4 66.4 57.6 68.8 C54.8 66.4 52.8 63.8 52.8 60.6 C52.8 57.4 54.8 54.0 57.6 50.6 Z" fill="#FFF6DA"/>
+<rect x="38.9" y="79.0" width="37.4" height="6.0" rx="1.7" fill="#B88C58"/>
+<ellipse cx="10.10" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="16.85" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="23.60" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="30.35" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="37.10" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="43.85" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="50.60" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="57.35" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="64.10" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="70.85" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="77.60" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="84.35" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="91.10" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="97.85" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/><ellipse cx="104.60" cy="100.1" rx="1.25" ry="0.85" fill="#4A5478"/>
+</svg>

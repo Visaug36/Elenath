@@ -32,6 +32,42 @@ public protocol FileSystem: Sendable {
     func trashItemReturningURL(at url: URL) throws -> URL?
     /// When the item's contents last changed, or nil if it doesn't exist.
     func modificationDate(at url: URL) -> Date?
+    /// What is at `url`, without following a symbolic link there. Nil when nothing is.
+    func info(at url: URL) -> FileInfo?
+}
+
+/// What identifies a file on its volume. It survives a rename or a move within the volume, so Elenath can
+/// follow a note that was renamed in Finder.
+public struct FileIdentity: Hashable, Sendable {
+    public var volume: UInt64
+    public var file: UInt64
+
+    public init(volume: UInt64, file: UInt64) {
+        self.volume = volume
+        self.file = file
+    }
+}
+
+/// The facts about one item on disk.
+public struct FileInfo: Hashable, Sendable {
+    public var isDirectory: Bool
+    public var isSymbolicLink: Bool
+    public var byteCount: Int64
+    public var modified: Date?
+    public var created: Date?
+    public var identity: FileIdentity?
+
+    public init(
+        isDirectory: Bool, isSymbolicLink: Bool = false, byteCount: Int64 = 0, modified: Date? = nil,
+        created: Date? = nil, identity: FileIdentity? = nil
+    ) {
+        self.isDirectory = isDirectory
+        self.isSymbolicLink = isSymbolicLink
+        self.byteCount = byteCount
+        self.modified = modified
+        self.created = created
+        self.identity = identity
+    }
 }
 
 extension FileSystem {
@@ -108,5 +144,23 @@ public struct LocalFileSystem: FileSystem {
     public func modificationDate(at url: URL) -> Date? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
         return attributes[.modificationDate] as? Date
+    }
+
+    public func info(at url: URL) -> FileInfo? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        let type = attributes[.type] as? FileAttributeType
+        var identity: FileIdentity?
+        if let volume = (attributes[.systemNumber] as? NSNumber)?.uint64Value,
+            let file = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        {
+            identity = FileIdentity(volume: volume, file: file)
+        }
+        return FileInfo(
+            isDirectory: type == .typeDirectory,
+            isSymbolicLink: type == .typeSymbolicLink,
+            byteCount: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
+            modified: attributes[.modificationDate] as? Date,
+            created: attributes[.creationDate] as? Date,
+            identity: identity)
     }
 }

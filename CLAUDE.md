@@ -2,7 +2,7 @@
 
 Save this brief as CLAUDE.md in the repo root, follow it in every session, and keep it updated as we make decisions.
 
-You're building Elenath, a native macOS app that replaces the seven places I keep notes with one. It's a private, offline home for my ideas, university work, Red Cross work and everything else I do, with a small on-device assistant called Nano bot that files what I dump on it and shows me how things connect. It's the sibling of Ithil, my calendar (https://github.com/Visaug36/Ithil): the same look, the same principles, plain files in real Finder folders. It's for me alone, on my Mac. Reliability beats features. My notes are never lost, never locked in, and never leave the Mac.
+You're building Elenath, a native macOS app that replaces the seven places I keep notes, and my calendar, with one. It's a private, offline home for my ideas, university work, Red Cross work and everything else I do: notes, a calendar for everything I have to be at, and a small on-device assistant called Nano bot that files what I dump on it and shows me how things connect. Elenath takes over everything Ithil, my calendar (https://github.com/Visaug36/Ithil), does at 1.0.0: the same look, the same principles, plain files in real Finder folders. Once it has, Elenath is the only app I open. It's for me alone, on my Mac. Reliability beats features. My notes and my calendar are never lost, never locked in, and never leave the Mac.
 
 "Elenath" is Sindarin for all the stars together. Every note is a star, and links are the lines between them.
 
@@ -22,10 +22,10 @@ You're building Elenath, a native macOS app that replaces the seven places I kee
 - Swift 6 and SwiftUI, with AppKit where SwiftUI falls short (the text editor, the board canvas, floating panels). Deployment target macOS 26.0, Apple silicon only (arm64, so drop Ithil's universal-binary check). Build with the newest stable Xcode the runners have, and put anything newer than macOS 26 behind availability checks.
 - No third-party packages. System frameworks only: Foundation Models, Natural Language, Vision, PDFKit, Swift Charts, Accelerate, and SQLite through the system's own library.
 - Targets as in Ithil: `Elenath` (app), `ElenathCore` (static framework holding every piece of logic that can be tested without a window; no SwiftUI, no AppKit, no user-facing strings), `ElenathCoreTests` (Swift Testing, not hosted).
-- The language model, the embedder, the file system, the clock and Ithil's folder all sit behind small protocols, so everything runs on CI with fakes. CI runners have no Apple Intelligence, so no test may need the real model.
+- The language model, the embedder, the file system, the clock and notifications all sit behind small protocols, so everything runs on CI with fakes. CI runners have no Apple Intelligence, so no test may need the real model.
 - App Sandbox and Hardened Runtime on. Entitlements: user-selected read-write files and app-scope bookmarks only. No network entitlement and never the Private Cloud Compute entitlement, so macOS itself guarantees that nothing leaves the Mac.
 - The main thread never waits on disk, the index or the model.
-- Logs use os.Logger. Note titles, note text, file names and prompts are always .private.
+- Logs use os.Logger. Note titles, note text, event titles, file names, paths and prompts are always .private. Logs, the diagnostics report and crash output never contain them.
 - Mac only for now. A Windows version may come later, so keep ElenathCore free of UI code and document every file format in docs/FORMAT.md. The folder is the contract another app could read.
 
 ## Data: plain files are the truth
@@ -44,7 +44,14 @@ Elenath/                              the library: one folder I choose on first 
 │       ├── Lecture 7 notes.md
 │       ├── Attachments/              files dropped on notes in this folder (copied, never moved)
 │       └── Free body diagrams.board/ a board: board.json plus its images
-└── Red Cross/                        another space
+├── Red Cross/                        another space
+└── Calendar/                         the calendar, in Ithil's format (see Calendar)
+    ├── .ithil/
+    │   ├── events.json               subjects and events: schema version, migrations, backups
+    │   └── backups/
+    └── 2026-11-16/
+        └── 14.00 Physics Lecture/    one folder per event occurrence, made when the first file arrives
+            └── .ithil-event          marker with the event's id and date
 ```
 - The library folder is chosen on first launch (suggest ~/Documents/Elenath) and kept as a security-scoped bookmark. Handle a non-empty folder, a missing folder ("Locate or choose folder", never crash, never quietly start empty) and moving the library exactly as Ithil does.
 - Notes are UTF-8 Markdown files that any editor can open. Optional front matter holds only `id`, `created`, `kind` (note, idea, goal), `tags`, `goals` and `event`. Keys Elenath doesn't know are kept byte for byte, and Elenath never rewrites a body I didn't edit.
@@ -56,31 +63,34 @@ Elenath/                              the library: one folder I choose on first 
 - Autosave with atomic writes; I never press Save. Deleting moves to the Trash, and nothing is ever deleted permanently. Nothing is written outside the library except Elenath's own index and safety copies in its container.
 - library.json and space.json follow Ithil's LibraryStore: schema version with migrations, atomic writes, rolling backups, a safety copy in Application Support, recovery from the newest good backup with a message to me, and read-only opening of a newer schema.
 - Sanitize file and folder names (no / or :, no leading dots, a length limit).
-- Copying the library folder is a full backup. Opening it on another Mac restores everything; the index rebuilds itself.
+- Copying the library folder is a full backup, the calendar included. Opening it on another Mac restores everything; the index rebuilds itself.
+- `Calendar` is a reserved name, like `Inbox`: it is never a space.
 
 ## Spaces
 - A space is a top-level folder in the library: Uni, Red Cross, Ideas, whatever I create. Each has a color (Ithil's subject palette plus a custom color), an SF Symbol, and a description and keywords that help Nano bot route things.
 - By default spaces mix: search, links, suggestions and the Sky can span them, so I can see how an idea connects to a course or a goal.
 - A space can be **sealed**. A sealed space's notes, files, index, memory and decisions are used only while I'm working inside it. Nothing from it appears in another space's search, suggestions, answers, links or Sky, and nothing from other spaces appears inside it. One crossing is allowed: Nano bot may use a sealed space's name, description and keywords, never its contents, to propose filing an Inbox item there.
 - The Inbox belongs to no space. Its items are used for nothing except filing them.
+- **The calendar is the one deliberate exception to sealing.** Events from every space, sealed ones included, show fully on the calendar, on Today, in notifications and in the menu bar (Red Cross shifts next to lectures). The exception covers an event's title, time and location there, and nothing else: an event's notes and files stay sealed, and outside its space the event stays out of search, suggestions, the Sky and anything Nano bot is shown. The leak tests prove both halves.
 - Enforce sealing at one choke point in ElenathCore's retrieval layer and prove it with tests: a marker word planted in a sealed space must never show up in any search result, suggestion or model prompt built for another space.
 
 ## Features
-1. **Main window.** Sidebar: Today, Inbox with a count, spaces with their folders, tags. Detail: the note, board or view I opened. Toolbar: back and forward, search, new note, the Nano bot panel toggle.
-2. **Today.** The landing screen: what's waiting in the Inbox, proposals from Nano bot, open tasks, recently edited notes and, once the Ithil bridge exists, what's up next.
+1. **Main window.** Sidebar: Today, Inbox with a count, the Calendar, spaces with their folders, tags. Detail: the note, board, calendar or view I opened. Toolbar: back and forward, search, new note, the Nano bot panel toggle.
+2. **Today.** The landing screen: what's up next and today's events, what's waiting in the Inbox, proposals from Nano bot, open tasks and recently edited notes.
 3. **Editor.** One pane of Markdown styled as I type, with no separate preview: headings, emphasis, lists, clickable checkboxes, quotes, code, simple tables, inline images, links (⌘-click to follow), `[[` autocomplete, find in note. Backlinks and related notes sit below the note. Any language, including right-to-left and mixed-direction text.
-4. **Inbox and Quick Capture.** A floating panel from anywhere (default ⌥⇧Space, changeable, because Ithil owns ⌥Space). Type, paste text, an image or a link, or drop files. ↩ saves to the Inbox, ⌘↩ saves and opens, esc closes. Starting with a space's name or keyword ("uni: …") files it there directly. A pasted link is kept as a link: Elenath can't fetch pages.
-5. **Search.** Across titles, text, tags, attachments and boards, with filters for space, folder, tag, kind and date. Results open at the matching spot.
-6. **Import.** Drop files or whole folders onto a space or the Inbox: Markdown, plain text, RTF, Word documents, PDFs, images. Originals are copied, never moved. Write docs/IMPORT.md with the steps for each place my notes live today.
-7. **Boards.** An infinite canvas for drawing and thinking: freehand strokes (trackpad or mouse), rectangles, ellipses, lines and arrows, connectors that stay attached, text, sticky notes, images, note cards that open the note, and charts. Select, move, resize, group, align, reorder, snap, undo, copy and paste. Export a selection or the whole board as PNG, PDF or SVG. Text on a board is searchable.
-8. **Charts.** A chart is a small table plus a few settings, stored as text inside a note (a fenced `chart` block) or as an element on a board, and drawn with Swift Charts in the app's palette: bar, line, area, scatter, donut. Export as PNG or PDF.
-9. **Goals.** A goal is a note of kind `goal`, with an optional due date and parent goal. Any note can point at goals. A goal's page shows everything that points at it over time, its open tasks and when it last moved, so I can see what brings me closer to what.
-10. **The Sky.** A map of a space, or of all spaces that mix: notes are stars sized by their links, goals are bright stars, links are faint lines. Filter by tag, goal and time; click a star to preview the note. The layout is computed once in the background and cached. Nothing drifts or jitters. Provide a list alternative for VoiceOver.
-11. **Frames, for design work.** Fixed-size frames on a board (presets such as A4, square post, phone screen, Mac window) with their own background, text styles and color swatches, alignment guides, and export per frame. This is not Figma: no components, auto layout or prototyping. Ask before adding more.
-12. **Settings** (General / Spaces / Nano bot / Ithil / Files): appearance Night / Dawn / Match System, Quick Capture hotkey, library folder, spaces and sealing, Nano bot's permissions, self-test and index tools, the Ithil folder and subject mapping, launch at login, menu bar.
-13. **Onboarding** in the app's style: welcome, choose folder, create first spaces, meet Nano bot (with its availability explained).
-14. **Menu bar extra** (`sparkles` template icon): Quick Capture, Inbox count, Open Elenath, Settings, Quit. Can be turned off.
-15. **Keyboard:** ⌘N new note, ⌘O jump to a note by title, ⌘F find in note, ⇧⌘F search everywhere, ⌘K Nano bot's command field, ⌘, Settings. Everything is reachable by keyboard, with ⌘Z / ⇧⌘Z everywhere, including after Nano bot's changes. Help menu: "Check for Updates…" and "Report an Issue…" open GitHub in the browser; the app itself never touches the network.
+4. **Inbox and Capture.** One floating panel from anywhere, for notes and events, on one changeable hotkey. Type, paste text, an image or a link, or drop files. A note is the default: ↩ saves to the Inbox, ⌘↩ saves and opens, esc closes, and starting with a space's name or keyword ("uni: …") files it there directly. When the text reads like an event ("physics quiz thursday 10am", Ithil's Quick Add parsing), the panel also offers to add it to the calendar, on a key of its own, so a note that mentions a date never becomes an event by accident. A pasted link is kept as a link: Elenath can't fetch pages.
+5. **Search.** Across titles, text, tags, attachments, event files and boards, with filters for space, folder, tag, kind and date. Results open at the matching spot. The calendar has its own search over events, as in Ithil.
+6. **Import.** Drop files or whole folders onto a space or the Inbox: Markdown, plain text, RTF, Word documents, PDFs, images. Originals are copied, never moved. Write docs/IMPORT.md with the steps for each place my notes live today. "Bring in my Ithil calendar" moves my calendar in (see Calendar).
+7. **Calendar.** Everything Ithil 1.0.0 does (see Calendar): Week, Day and Month views, events with every field, repeats, subjects, notifications, a Finder folder per event, drag to move and resize, undo.
+8. **Boards.** An infinite canvas for drawing and thinking: freehand strokes (trackpad or mouse), rectangles, ellipses, lines and arrows, connectors that stay attached, text, sticky notes, images, note cards that open the note, and charts. Select, move, resize, group, align, reorder, snap, undo, copy and paste. Export a selection or the whole board as PNG, PDF or SVG. Text on a board is searchable.
+9. **Charts.** A chart is a small table plus a few settings, stored as text inside a note (a fenced `chart` block) or as an element on a board, and drawn with Swift Charts in the app's palette: bar, line, area, scatter, donut. Export as PNG or PDF.
+10. **Goals.** A goal is a note of kind `goal`, with an optional due date and parent goal. Any note can point at goals. A goal's page shows everything that points at it over time, its open tasks and when it last moved, so I can see what brings me closer to what.
+11. **The Sky.** A map of a space, or of all spaces that mix: notes are stars sized by their links, goals are bright stars, links are faint lines. Filter by tag, goal and time; click a star to preview the note. The layout is computed once in the background and cached. Nothing drifts or jitters. Provide a list alternative for VoiceOver.
+12. **Frames, for design work.** Fixed-size frames on a board (presets such as A4, square post, phone screen, Mac window) with their own background, text styles and color swatches, alignment guides, and export per frame. This is not Figma: no components, auto layout or prototyping. Ask before adding more.
+13. **Settings**, one window (General / Spaces / Calendar / Nano bot / Files): appearance Night / Dawn / Match System, the Capture hotkey, library folder, spaces and sealing, subjects with their colors, keywords and homes, default alert, first weekday, notifications, Bring in my Ithil calendar, Nano bot's permissions, self-test and index tools, launch at login, menu bar.
+14. **Onboarding** in the app's style: welcome, choose folder, create first spaces, notifications (explained before macOS asks), bring in an Ithil calendar if I have one, meet Nano bot (with its availability explained).
+15. **Menu bar extra**, one for everything: today and the next event with Open Files, Capture, the Inbox count, Open Elenath, Settings, Quit. Can be turned off.
+16. **Keyboard:** ⌘N new note, ⌘O jump to a note by title, ⌘F find, ⇧⌘F search everywhere, ⌘K Nano bot's command field, ⌘, Settings, and Ithil's calendar keys (today, previous and next, Day / Week / Month, new event, Delete), with one scheme where the two collide. Everything is reachable by keyboard, with ⌘Z / ⇧⌘Z everywhere, including after Nano bot's changes and for events. Help menu: "Check for Updates…" and "Report an Issue…" open GitHub in the browser; the app itself never touches the network.
 
 ## The index (the retrieval layer)
 - The index is a derived cache that can be rebuilt at any time: one SQLite database per space, kept in Elenath's container and never inside the library, which may sit in a synced folder.
@@ -90,6 +100,7 @@ Elenath/                              the library: one folder I choose on first 
 - Indexing is incremental (content hashes), runs in the background, can be paused, and is stamped with the embedder's identifier and revision so it rebuilds itself when that changes. Settings has "Rebuild Index".
 - Measure retrieval instead of assuming it: keep a small set of demo questions with the notes they should find, run it in the self-test on the real embedder, and use the score to choose between embedder options.
 - Open tasks, backlinks, tags and related notes are all read from this index.
+- An event's files are indexed into its subject's home space, so sealing applies to them.
 - All retrieval for Nano bot goes through this index so sealing holds. Never hand the model a system-wide search tool.
 
 ## Nano bot
@@ -106,8 +117,8 @@ Nano bot is a small assistant, not a genius: Apple's on-device model has about 3
   5. *Ask*: answer a question from my notes, citing the notes used with links. Say "that isn't in your notes" when retrieval is weak, and never pass off the model's own knowledge as mine.
   6. *Spark*: for an idea, ask three sharpening questions, show notes it could combine with, and suggest next steps. It helps me think; it doesn't write the idea for me.
   7. *Review*: weekly. What's new, open tasks, ideas gone quiet, movement toward each goal.
-- **Talking to it.** A side panel and a command field: a slash command per job, and plain language routed to one job by a guided-generation classifier. In Ask it may call a few read-only tools (search notes, read a note, list the Inbox, upcoming Ithil events), with a small cap on calls per question and as few tools per session as possible, since every tool costs context.
-- **Proposals.** Nano bot never changes anything directly. Every change is a proposal card (what, where, why) that I accept, edit or skip. Accepted changes go through the same code as my own edits and can be undone with ⌘Z or from an activity log. Each job has a setting: "Ask first" (the default) or "Do it and let me review". Nano bot can never delete, never write outside the library, and never touch Ithil's folder.
+- **Talking to it.** A side panel and a command field: a slash command per job, and plain language routed to one job by a guided-generation classifier. In Ask it may call a few read-only tools (search notes, read a note, list the Inbox, the calendar: what's coming, a given day, an event's files), with a small cap on calls per question and as few tools per session as possible, since every tool costs context.
+- **Proposals.** Nano bot never changes anything directly. Every change is a proposal card (what, where, why) that I accept, edit or skip. Accepted changes go through the same code as my own edits and can be undone with ⌘Z or from an activity log. Each job has a setting: "Ask first" (the default) or "Do it and let me review". Nano bot can never delete, never write outside the library, and never add or change an event itself: it may propose events it finds in what I dump, as proposal cards like every other change.
 - **Learning, without training anything:**
   - retrieval over everything indexed in the space;
   - every proposal I accept, change or reject is saved in the space's decisions.jsonl, and the most similar past decisions are shown to the model next time, so my corrections stick;
@@ -117,40 +128,46 @@ Nano bot is a small assistant, not a genius: Apple's on-device model has about 3
 - **Self-test.** Settings > Nano bot > Run Self-Test runs a fixed set of cases through the real model and embedder on my Mac and produces a report I can copy: availability, context size, pass or fail per case, timings. This is how you learn what the real model does, since CI can't run it. Keep prompts in one place, versioned, with tests against a scripted fake model. Re-run after macOS updates, because the model can change underneath us.
 - **Lineage.** Nano bot borrows the ideas of the open-source nanobot project (a small readable loop, a few tools, memory in plain files, background jobs) and is written natively in Swift. None of its code is used.
 
-## Ithil bridge
-- I choose my Ithil folder once (security-scoped bookmark). It is read-only: Elenath never writes inside it.
-- Read `.ithil/events.json` as documented in Ithil's docs/ARCHITECTURE.md (schema version 1). Copy the model, codec and occurrence expansion source from IthilCore; don't link the two repos. If the file has a newer schema than Elenath knows, say so and show nothing rather than guess. Watch the file for changes.
-- Uses:
-  - "Up next" on Today, with a button that reveals the event's folder in Finder or opens Ithil.
-  - Linking a note to an event occurrence (`event` in front matter), and "Notes for this lecture".
-  - When I capture during an event, offer that event's subject and folder.
-  - In Settings, map each Ithil subject to a space and folder. Files in mapped events' folders (PDFs, text, images) are indexed into that space, and sealing applies to them too.
-  - Nano bot's read-only tools: upcoming events, events on a day, files in an event's folder.
-- Later, and only if I ask, because it needs a change in Ithil: an `ithil://` link to open an event, or to create one from Elenath.
+## Calendar
+Elenath does everything Ithil 1.0.0 does. Ithil's CLAUDE.md (Features, Quality bar, decisions log) and its docs/RELEASE_CHECKLIST.md are the checklist. Nothing is dropped silently: if something doesn't fit, ask me.
+- **What it covers:** Week (the default), Day and Month views, with the mini month, Up next and subjects with visibility toggles; events with every field (title, date, time or all-day, the event's own time zone, subject, location, alert, repeat with "this event or all future ones", notes); subjects with colors and Quick Add keywords; search; notifications that fire while the app is quit ("{Title} in 10 min", "time · location · N files", with "Open Files"); a Finder folder per event occurrence with drop, Quick Look, Show in Finder and live watching; drag to move and resize; undo; Ithil's keyboard shortcuts and menu bar items.
+- **Port, don't rewrite.** IthilCore's code and its tests come across into ElenathCore (renamed where names clash), and Ithil's views into the app, adapted to Elenath's AppModel, undo and macOS 26. The product rules in Ithil's decisions log still hold. The screens are in Ithil's docs/DESIGN.md and are written into Elenath's before they are built.
+- **Storage:** the `Calendar` folder in the library keeps Ithil's format on disk unchanged: `.ithil/events.json` with its schema version, migrations, backups, safety copy and recovery, and the dated event folders with their markers. So one folder is still my whole backup, and the Calendar folder stays a valid Ithil folder. Documented in docs/FORMAT.md. Elenath's own calendar settings (each subject's home) live in library.json, so events.json stays exactly Ithil's.
+- **Each subject has a home:** a space and a folder. Notes for an event go there, a note can be linked to one occurrence (`event` in its front matter; "Notes for this lecture"), and an event's files are indexed into that space. An event's sealing follows its subject's home.
+- **The sealing exception** is in Spaces: title, time and location cross to the calendar, Today, notifications and the menu bar; nothing else does.
+- **Moving in: "Bring in my Ithil calendar".** I pick my Ithil folder (read-only: Elenath never writes inside it). Elenath copies everything (events, subjects, each event's folder and files), checks the counts, and leaves the original untouched. Running it twice duplicates nothing. It tells me exactly how to stop the alerts Ithil has already scheduled.
+- **One app:** one capture panel and hotkey for notes and events, one menu bar extra, one launch-at-login setting, one Settings window.
+- **Nano bot** reads the calendar (what's coming, a given day, an event's files) and may propose events it finds in what I dump, as proposal cards. It never adds or changes events itself.
+- The Ithil repo is left alone: it stays as it is at 1.0.0.
 
 ## Design
 - The same world as Ithil. Copy its tokens from Ithil's docs/DESIGN.md and asset catalog into Elenath's own: Night and Dawn colors with their Increase Contrast variants, type, metrics and the star field. Elenath's repo must never depend on Ithil's.
+- The calendar's screens are Ithil's (Week, Day, Month, the event editor and details, Quick Add, files, notifications, the menu bar), fitted into Elenath's window.
 - Rules carried over: Night is the primary look and Dawn is the same world in daylight. Amber is reserved for selection, focus, primary buttons and "now". Stars appear only in the sidebar, title areas, empty states and the Sky, never behind text I'm reading or on a board. Glows are static assets. Icons are SF Symbols. New York for titles and headings, SF Pro for everything else, SF Mono for code, tabular numerals for times and counts.
 - Space colors are Ithil's subject palette (Clay, Teal, Iris, Fern, Rose) plus a custom color.
-- No design export exists for Elenath. Before building each new screen (editor, Inbox and capture panel, Nano bot panel and proposal cards, search, boards, charts, the Sky, onboarding, settings), write it into docs/DESIGN.md the way Ithil's screens are written: tokens, sizes, symbols, states.
+- No design export exists for Elenath. Before building each new screen (editor, Inbox and capture panel, the calendar, Nano bot panel and proposal cards, search, boards, charts, the Sky, onboarding, settings), write it into docs/DESIGN.md the way Ithil's screens are written: tokens, sizes, symbols, states.
 - Nano bot's mark is `sparkles` in the moonlight tint. Its proposals sit on `BackgroundRaised` cards, and only the Accept button is amber.
 - App icon: draw three options as SVG in the style of Ithil's icon (the same night sky, hill and small stars, with a constellation where Ithil has its moon), render them, show me, and wait for my pick.
 - On macOS 26 and later the system draws Liquid Glass. Content keeps its opaque token backgrounds, as in Ithil (no glass on glass).
 
 ## Quality bar
-- No lag on an M1 MacBook Air with 8 GB: launches in under a second with 10,000 notes; typing never stutters in a 1 MB note; search-as-you-type answers within 100 ms across 20,000 chunks; panning a board with 5,000 elements stays smooth; Elenath's own memory stays under 400 MB in normal use.
+- No lag on an M1 MacBook Air with 8 GB: launches in under a second with 10,000 notes; typing never stutters in a 1 MB note; search-as-you-type answers within 100 ms across 20,000 chunks; switching weeks and months stays instant with 5,000 events; copying a 2 GB file into an event never freezes the UI; panning a board with 5,000 elements stays smooth; Elenath's own memory stays under 400 MB in normal use.
+- Notifications fire while Elenath is quit.
 - Never lose a keystroke: tests interrupt writes midway and the note must survive.
 - Accessibility: VoiceOver labels everywhere, full keyboard access, Reduce Motion and Increase Contrast respected, text at WCAG AA contrast in both themes.
 - Localization-ready: every string in a String Catalog, English first.
-- Tests (Swift Testing) for: storage, migrations and corruption recovery; name sanitizing; front matter round-trips that preserve unknown keys and bodies byte for byte; link resolution and rename repair; conflict handling; the chunker; hybrid ranking with a fake embedder; sealing leak tests; every Nano bot pipeline against a scripted fake model; proposal apply and undo; the Ithil reader against fixture files, including a newer schema; board geometry; chart parsing.
+- Tests (Swift Testing) for: storage, migrations and corruption recovery; name sanitizing; front matter round-trips that preserve unknown keys and bodies byte for byte; link resolution and rename repair; conflict handling; hostile and huge input (Markdown, front matter, chat exports, documents, settings files); the calendar's date math, DST, recurrence, time zones, Quick Add parsing, folder naming and event file operations (Ithil's tests, ported); bringing in an Ithil folder (counts, run twice, a newer schema); the chunker; hybrid ranking with a fake embedder; sealing leak tests, the calendar exception included; every Nano bot pipeline against a scripted fake model; proposal apply and undo; board geometry; chart parsing.
+- A crash check on CI: the `-demo` app runs a scripted pass through its screens and actions, and CI fails if it crashes.
+- Before every release, an independent review for errors and security problems (docs/RELEASE_CHECKLIST.md).
 - Zero warnings. Format with swift-format.
-- A `-demo` launch argument loads an invented sample library (Uni, a sealed Red Cross space, Ideas), a scripted fake model and a fixture Ithil folder into a temporary folder, for screenshots and testing. It never touches real data.
+- A `-demo` launch argument loads an invented sample library (Uni, a sealed Red Cross space, Ideas, a week of events), a scripted fake model and a fixture Ithil folder into a temporary folder, for screenshots and testing. It never touches real data and never schedules real notifications.
 
 ## Repo
 - Bundle ID `io.github.visaug36.Elenath`.
 - README.md: icon, one-line pitch, screenshots, features, download and first-launch steps (the app isn't notarized, so explain System Settings > Privacy & Security > Open Anyway, and say up front "download Elenath-x.y.z.zip, not Source code"), how files are stored (the folder tree), what Nano bot needs and can't do, privacy, backup and moving to a new Mac, uninstall, FAQ, license, and a note that "Elenath" is Sindarin from J.R.R. Tolkien's writings and the project isn't affiliated with the Tolkien Estate.
 - docs/: DESIGN.md, ARCHITECTURE.md, FORMAT.md, IMPORT.md, RELEASE_CHECKLIST.md. CHANGELOG.md (Keep a Changelog and SemVer). If the repo is public, add the community files Ithil has.
 - CI (GitHub Actions) as in Ithil: swift-format lint, tests, a Release archive, the String Catalog check, and failure on any warning, on every push and pull request.
+- Workflows have the least permissions they need and pinned actions, and nothing a pull request from a fork can use to push, release or read secrets. No personal data in the history.
 - A Screenshots workflow from Phase 1 on, so every phase's pull request shows me real screenshots from `-demo`. I often review from my phone.
 - Releases: an arm64 Release build, zipped with ditto, with its SHA-256, attached to a GitHub Release with notes from CHANGELOG. Ad-hoc signed. Tag pushes are refused in this environment (see Ithil's log), so first try having the workflow create the tag and the release itself when the version changes on `main`. If that can't work, do it Ithil's way: I create the tag from the Releases page, and you tell me exactly what to tap. You may publish 0.x prereleases yourself after a phase is merged; 1.0.0 only when I say so.
 - scripts/install.sh builds Release locally and copies it to /Applications.
@@ -159,25 +176,36 @@ Nano bot is a small assistant, not a genius: Apple's on-device model has about 3
 ## How to work
 - **Environment** (the same as for Ithil): you work in a Linux cloud container without Xcode, so GitHub Actions is the compiler and test runner. Write each module's API contract in docs/ARCHITECTURE.md first, implement against it, have it reviewed independently, integrate, and let CI on the pushed branch judge. Read failures from the xcresult summary and swift-format's printed patch.
 - **Look things up.** Foundation Models, Liquid Glass and the other 2025 and 2026 APIs are newer than what you remember, and they changed again in macOS 27. Read Apple's current documentation before coding against them.
-- **Phases.** Each ends with CI green, screenshots, updated docs and CHANGELOG, this log updated, and a short list of what I should try.
-  1. Foundation: the project from Ithil's template, design tokens, docs/DESIGN.md for the Phase 2 screens, the icon options, docs/FORMAT.md and the Phase 2 contracts, CI green on an empty themed window, the Screenshots workflow.
-  2. Notes: library, spaces and sealing (with leak tests from the first search onward), storage and watching, the editor, Inbox and Quick Capture, the first half of the index (links, backlinks, tags, open tasks, FTS5 keyword search), import, Today, appearance, onboarding, settings. Release 0.1.0. **Stop here: I install it and move my notes in.**
-  3. Meaning: chunking, the embedder, hybrid search, related notes, PDF and image text, and the leak tests extended to suggestions.
-  4. Nano bot: the engine and availability, the File, Link, Tidy, Summarize and Ask jobs, proposals, undo and the activity log, learning, the self-test, and the leak tests extended to prompts. Release 0.2.0. **Stop here: I run the self-test and send you the report, and you tune from it.**
-  5. Ithil bridge.
-  6. Boards and charts.
-  7. Goals and the Sky, with the Spark and Review jobs.
-  8. Frames, the menu bar extra, an accessibility pass and polish. Get 1.0.0 ready, but don't publish it until I say so.
-- **Working mode.** Carry each phase through to merged and green yourself, and push after each one. Wait for me only at the two stop points, at the icon pick, and when a product decision is unclear. In that case ask me instead of guessing.
+- **Phases.** Each ends with CI green, screenshots, updated docs and CHANGELOG, this log updated, and a short list of what I should try. Order changed on 2026-11-15: the review, then the calendar, then search by meaning, then Nano bot, so Nano bot is built into the finished app.
+  1. Foundation (done, 0.0.1).
+  2. Notes (done, 0.1.0). **Stop point: I install it and move my notes in.**
+  3. Review: test the whole app and repo for errors and security problems with an independent reviewer; fix each finding with a test; add the crash check to CI. Release 0.1.1, then tell me plainly what only I can test on my Mac.
+  4. Calendar: Ithil moves in (see Calendar), with the leak tests extended to the calendar exception. Release 0.2.0.
+  5. Meaning: chunking, the embedder, hybrid search, related notes, PDF and image text (event files included), and the leak tests extended to suggestions. Release 0.3.0.
+  6. Nano bot: the engine and availability, the File, Link, Tidy, Summarize and Ask jobs, the calendar tools and event proposals, proposals, undo and the activity log, learning, the self-test, and the leak tests extended to prompts. Release 0.4.0. **Stop point: I run the self-test and send you the report, and you tune from it.**
+  7. Boards and charts.
+  8. Goals and the Sky, with the Spark and Review jobs.
+  9. Frames, an accessibility pass and polish. Get 1.0.0 ready, but don't publish it until I say so.
+- **Before every release,** repeat the review of phase 3 (docs/RELEASE_CHECKLIST.md).
+- **My reports come first:** when my diagnostics report or bug reports arrive, they come before the phase in progress.
+- **Working mode.** Carry each phase through to merged and green yourself, and push after each one. Wait for me only at the stop points, and when a product decision is unclear. In that case ask me instead of guessing.
 - Don't start a phase while the one before it has known bugs.
 
 ## Not now
-A Windows or phone version, sync between devices, a different local model (if Apple's proves too weak, the route is an MLX-backed model behind `BotModel`, but it adds a package and a model download, so ask first), writing into Ithil, sharing or collaboration.
+A Windows or phone version, sync between devices, a different local model (if Apple's proves too weak, the route is an MLX-backed model behind `BotModel`, but it adds a package and a model download, so ask first), changes to the Ithil repo (it stays at 1.0.0), sharing or collaboration.
 
 ## Decisions & status log
 Keep this section current. Newest first.
 
 ### Decisions
+- **Ithil moves into Elenath (user, 2026-11-15):** "I don't want to open two apps." Elenath gets everything Ithil 1.0.0 does, and then it is the only app the user opens. The brief was rewritten for it: the pitch, a Calendar section in place of the Ithil bridge, Features, Spaces (the calendar exception to sealing), Design, Quality bar, the phases, Not now. The user's terms:
+  - First a review of the whole app and repo for errors and security problems, with an independent reviewer, fixed with a test each, released as 0.1.1, plus an automatic crash check on CI. The review is repeated before every release from now on.
+  - Then the calendar, before search by meaning and Nano bot, so Nano bot is built into the finished app. New order: review (phase 3, 0.1.1), calendar (4, 0.2.0), meaning (5, 0.3.0), Nano bot (6, 0.4.0, stop point), then boards and charts, goals and the Sky, frames and polish.
+  - Port Ithil's code, tests and views; don't rewrite. Keep its product rules. Keep its format on disk unchanged in a `Calendar` folder unless there is a strong reason against it. "Bring in my Ithil calendar" copies everything, checks the counts, leaves the original untouched and never duplicates.
+  - The calendar is for everything: events from every space show fully on the calendar, Today, notifications and the menu bar, sealed spaces included. That is the one deliberate exception to sealing, and it covers title, time and location only.
+  - Each subject has a home (a space and a folder). One capture panel for notes and events, with a note as the default. Nano bot reads the calendar and only ever proposes events.
+  - No need to wait for the 0.1.0 feedback to start; reports from the user come first when they arrive. The Ithil repo stays as it is at 1.0.0.
+- **Ithil (user, 2026-11-10)**, superseded on 2026-11-15: Elenath was to look like Ithil and read its data through a read-only bridge.
 - **Phase 2 as built (2026-11-13):**
   - **App layer:** `AppModel` (with `+Notes`, `+Import`, `+Files`, `+LinkRepair`) owns the library, navigation and every change; `EditorSession` owns the open note's autosave (0.5 s), conflicts and recovery copies. The editor is an `NSTextView` on TextKit 1, restyled per edited paragraph from the core's scanner.
   - **Undo:** every change to notes, folders and spaces is an `UndoableStep` on the window's undo manager; a step returns its own inverse. Typing has its own undo per note.
@@ -236,6 +264,14 @@ Keep this section current. Newest first.
 - **Ithil (user, 2026-11-10):** Elenath looks like Ithil, and Nano bot can read Ithil's data.
 
 ### Open items
+- Asked on 2026-11-15, waiting for answers before building (see the plan sent that day):
+  - The public history: 3 merge commits on `main`, made through GitHub, carry the user's name and personal email. Rewrite `main` (force push, the two releases re-made), or only turn on GitHub's "Keep my email addresses private" for the future?
+  - One hotkey for Capture: ⌥Space (Ithil's) proposed.
+  - Capture's key for adding an event: ⌥↩ proposed (⌥⌘↩ adds and opens it).
+  - Where Ithil's and Elenath's shortcuts collide: Ithil's keys kept in the calendar (⌘1/2/3 Day/Week/Month, ⌘T today, ⌘N new event there), Today on ⌘T elsewhere, the Inbox on ⌥⌘I.
+  - The calendar's own search: finds every space's events by title and location (they are on the grid anyway), never by a sealed event's notes or files. Or leave sealed events out of it?
+  - A sealed space's notifications: title, time and location, no file count; the action opens the event in its space instead of Finder.
+  - An event without a subject: no home, never sealed, its notes go to the Inbox.
 - Not answered yet: which other languages besides English. Keyword search is built for space-separated words first, with the trigram table for anything else.
 - The defaults listed under Decisions were shown to the user on 2026-11-11. They stand unless the user changes them.
 - The Liquid Glass app icon for macOS 26 (an Icon Composer `.icon` file) is not planned; the AppIcon set is used, as in Ithil.
@@ -245,6 +281,7 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-15: **Change of plan: Ithil moves into Elenath.** CLAUDE.md rewritten for it. Ithil 1.0.0 was read again for the plan: about 5,000 lines of IthilCore, 326 tests and 16,000 lines of app code to port. The plan and questions were sent to the user; nothing is built until they say OK. A first finding for the review is already known: personal data in 3 merge commits on `main`.
 - 2026-11-15: **0.1.0 published; stopped for the user (first stop point).** Phase 2 was merged (https://github.com/Visaug36/Elenath/pull/2) and the Release workflow published https://github.com/Visaug36/Elenath/releases/tag/v0.1.0 as a prerelease, with `Elenath-0.1.0.zip` and its SHA-256, creating the tag itself. Waiting for the user to install it and move their notes in. Ask them for: the diagnostics report (Settings › Files › Run Diagnostics), what broke or felt wrong while moving notes in, the other languages they write in, and any default to change. Phase 3 (meaning) starts after that, and not while 0.1.0 has known bugs.
 - 2026-11-15: **Phase 2 built and reviewed; PR open** (https://github.com/Visaug36/Elenath/pull/2). The app compiles with zero warnings on Xcode 26.6 and 27.2, 240 core tests pass, and the Screenshots workflow shows every screen. The independent review of the app layer ran once the usage limit reset; its 11 findings are fixed. Next: CI green on the fixes, date the 0.1.0 changelog section, merge, check that the Release workflow publishes 0.1.0, then stop for the user to install it and move their notes in.
 - 2026-11-11: **0.0.1 published; Phase 2 started.** The Release workflow built the merge commit and published https://github.com/Visaug36/Elenath/releases/tag/v0.0.1 as a prerelease, creating the tag itself, so no tag ever has to be pushed from here or made by hand. Phase 2 has begun on `claude/new-session-fplgmb`, restarted from `main`: the name rules, the model types, the folder policy and the document store for library.json and space.json are in `ElenathCore` with their tests (74 tests locally). Next in Phase 2, in this order: `LibraryCatalog`, `NoteText` and front matter, `NoteStore`, the Markdown scanner, links, the index with `Reach` and the leak tests, capture, import; then the app layer.

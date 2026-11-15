@@ -8,12 +8,15 @@ import Foundation
 /// - `-demoNow 2026-11-10T14:30` (local time) additionally pins the clock, for screenshots. It only takes
 ///   effect together with `-demo`, so a stray argument can never freeze the clock on real data.
 /// - The screenshot flags (see `DemoScene`) only take effect together with `-demo` too.
+/// - `-demoSelfCheck` (with `-demo`) walks through the app and quits: CI's crash check (`DemoSelfCheck`).
 struct LaunchOptions: Sendable {
     var isDemo: Bool
     /// The pinned "now" from `-demoNow`, if any.
     var pinnedNow: Date?
     /// The screenshot scene from `-demoAppearance`, `-demoScene` and `-demoWindowSize`.
     var demoScene = DemoScene()
+    /// `-demoSelfCheck`: run `DemoSelfCheck` and quit.
+    var runsSelfCheck = false
 
     /// The options of this process.
     static var current: LaunchOptions {
@@ -33,6 +36,7 @@ struct LaunchOptions: Sendable {
         var options = LaunchOptions(isDemo: isDemo)
         guard isDemo else { return options }
         options.demoScene = DemoScene.parse(arguments)
+        options.runsSelfCheck = arguments.contains("-demoSelfCheck")
         if let flag = arguments.firstIndex(of: "-demoNow"), flag + 1 < arguments.count {
             options.pinnedNow = parseLocalDateTime(arguments[flag + 1], timeZone: timeZone)
         }

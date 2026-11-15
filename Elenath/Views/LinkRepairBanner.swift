@@ -19,13 +19,13 @@ struct LinkRepairBanner: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
             Button("Not Now") {
-                model.dismissLinkRepair()
+                model.dismissLinkRepair(offer)
             }
             .buttonStyle(.plain)
             .font(Typography.secondary)
             .foregroundStyle(Color.textSecondary)
             Button("Update Links") {
-                model.acceptLinkRepair()
+                model.acceptLinkRepair(offer)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.small)

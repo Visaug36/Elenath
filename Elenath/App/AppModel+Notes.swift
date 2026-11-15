@@ -26,17 +26,22 @@ extension AppModel {
             return
         }
         stepsInFlight += 1
+        // The open note saves what was typed before the step, and nothing while it runs; afterwards it
+        // shows what the step did and saves what was typed meanwhile, where the note is then.
+        let open = session
         let work = Task { @MainActor () -> UndoableStep? in
-            defer {
-                self.stepsInFlight -= 1
-                self.stepsFinished()
-            }
+            await open?.beginStep()
+            let inverse: UndoableStep?
             do {
-                return try await step.perform(self)
+                inverse = try await step.perform(self)
             } catch {
                 self.report(error)
-                return nil
+                inverse = nil
             }
+            await open?.endStep()
+            self.stepsInFlight -= 1
+            self.stepsFinished()
+            return inverse
         }
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { model in
@@ -263,10 +268,10 @@ extension AppModel {
     private static func trashNoteStep(_ note: NoteRef) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
-            if model.session?.ref == note {
-                await model.session?.flush()
-            }
             let trashed = try await services.notes.trash(note)
+            if model.session?.ref == note {
+                model.session?.noteWasTrashed()
+            }
             model.removeFromNavigation { $0 == .note(note) }
             await model.noteChanged([note])
             await model.containerChanged([note.container])
@@ -280,6 +285,7 @@ extension AppModel {
             guard let services = model.services else { return nil }
             let path = try await services.notes.restore(from: trashed, to: note.path, in: note.container)
             let restored = NoteRef(container: note.container, path: path)
+            model.markOwnChange(note.container, path)
             await model.noteChanged([restored])
             await model.containerChanged([note.container])
             return trashNoteStep(restored)
@@ -290,18 +296,15 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            if isOpen {
-                await model.session?.flush()
-            }
             let context = try await services.retrieval.linkContext(for: note.container)
             let linking = try await services.retrieval.linkingNotes(to: note)
             let renamed = try await services.notes.rename(note, to: title)
             guard renamed != note else { return nil }
+            model.markOwnChange(renamed.container, renamed.path)
             let changed = await model.rewriteLinks(
                 moves: [note: renamed], linking: linking, before: context, after: context.moving(note, to: renamed))
             if isOpen {
                 await model.session?.follow(to: renamed)
-                await model.session?.reload()
             } else {
                 model.replaceInNavigation(.note(note), with: .note(renamed))
             }
@@ -314,15 +317,13 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            if isOpen {
-                await model.session?.flush()
-            }
             let context = try await services.retrieval.linkContext(for: note.container)
             let linking = try await services.retrieval.linkingNotes(to: note)
             // Attachments other notes use are copied, not moved. Until the index is complete, all are.
             let shared = model.isIndexing ? nil : try? await services.retrieval.attachmentNamesShared(by: note)
             let moved = try await services.notes.move(note, to: folder, in: container, sharedAttachments: shared)
             guard moved != note else { return nil }
+            model.markOwnChange(moved.container, moved.path)
             // Links follow the note only where they can still reach it.
             let reach = Reach(workplace: Reach.workplace(of: note.container), spaces: model.spaces)
             let after = reach.allows(moved.container) ? context.moving(note, to: moved) : context.removing(note)
@@ -330,7 +331,6 @@ extension AppModel {
                 moves: [note: moved], linking: linking, before: context, after: after)
             if isOpen {
                 await model.session?.follow(to: moved)
-                await model.session?.reload()
             } else {
                 model.replaceInNavigation(.note(note), with: .note(moved))
             }
@@ -343,10 +343,6 @@ extension AppModel {
     private static func toggleTaskStep(in note: NoteRef, at location: Int, text: String) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
-            let isOpen = model.session?.ref == note
-            if isOpen {
-                await model.session?.flush()
-            }
             let loaded = try await services.notes.read(note)
             guard var edited = loaded.text else { return nil }
             // The index may be a moment behind: find the task again in the text as it is now.
@@ -359,9 +355,6 @@ extension AppModel {
             body.replaceCharacters(in: task.markRange, with: task.isDone ? " " : "x")
             edited.body = body as String
             _ = try await services.notes.save(edited, to: note, expecting: loaded.stamp)
-            if isOpen {
-                await model.session?.reload()
-            }
             await model.noteChanged([note])
             return toggleTaskStep(in: note, at: task.boxRange.location, text: text)
         }
@@ -372,10 +365,10 @@ extension AppModel {
     private static func trashItemStep(_ path: ItemPath, in container: Container) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
-            if let open = model.session?.ref, open.container == container, open.path.isInside(path) {
-                await model.session?.flush()
-            }
             let trashed = try await services.notes.trashItem(path, in: container)
+            if let open = model.session?.ref, open.container == container, open.path.isInside(path) {
+                model.session?.noteWasTrashed()
+            }
             model.removeFromNavigation { route in
                 switch route {
                 case .folder(container, let folder): return folder.isInside(path)
@@ -388,6 +381,7 @@ extension AppModel {
             return UndoableStep { model in
                 guard let services = model.services else { return nil }
                 let restored = try await services.notes.restore(from: trashed, to: path, in: container)
+                model.markOwnChange(container, restored)
                 await model.containerChanged([container])
                 return trashItemStep(restored, in: container)
             }
@@ -399,11 +393,15 @@ extension AppModel {
     ) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
-            if let open = model.session?.ref, open.container == container, open.path.isInside(path) {
-                await model.session?.flush()
-            }
             let moved = try await services.notes.moveItem(path, in: container, to: folder, in: destination)
             guard !(moved == path && container == destination) else { return nil }
+            model.markOwnChange(destination, moved)
+            // The open note goes with the folder it is in.
+            if let open = model.session?.ref, open.container == container, open.path.isInside(path),
+                let new = AppModel.place(of: open, after: path, became: moved, in: destination)
+            {
+                await model.session?.follow(to: new)
+            }
             model.removeFromNavigation { route in
                 switch route {
                 case .folder(container, let shown): return shown.isInside(path)
@@ -419,14 +417,12 @@ extension AppModel {
     private static func renameFolderStep(_ folder: ItemPath, in container: Container, to name: String) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
-            if let open = model.session?.ref, open.container == container, open.path.isInside(folder) {
-                await model.session?.flush()
-            }
             let workplace = Reach.workplace(of: container)
             let context = try await services.retrieval.linkContext(for: container)
             let linking = try await services.retrieval.notesLinking(throughFolderNamed: folder.name, from: workplace)
             let renamed = try await services.notes.renameFolder(folder, in: container, to: name)
             guard renamed != folder else { return nil }
+            model.markOwnChange(container, renamed)
             // Every note inside has a new path. The index still has the old ones: that is where the list
             // of what moved comes from.
             var moves: [NoteRef: NoteRef] = [:]
@@ -443,14 +439,14 @@ extension AppModel {
             }
             let changed = await model.rewriteLinks(
                 moves: moves, linking: linking + Array(moves.keys), before: context, after: after)
-            let open = model.session?.ref
-            for (old, new) in moves {
-                if open == old {
-                    await model.session?.follow(to: new)
-                    await model.session?.reload()
-                } else {
-                    model.replaceInNavigation(.note(old), with: .note(new))
-                }
+            for (old, new) in moves where model.session?.ref != old {
+                model.replaceInNavigation(.note(old), with: .note(new))
+            }
+            // The open note goes with the folder, also when the index doesn't know it yet.
+            if let open = model.session?.ref, open.container == container, open.path.isInside(folder),
+                let new = AppModel.place(of: open, after: folder, became: renamed, in: container)
+            {
+                await model.session?.follow(to: new)
             }
             model.replaceFolderInNavigation(folder, with: renamed, in: container)
             await model.containerChanged([container])
@@ -468,9 +464,6 @@ extension AppModel {
             var changed: [NoteRef] = []
             if edited.name != current.name {
                 let container = Container.space(edited.id)
-                if let open = model.session?.ref, open.container == container {
-                    await model.session?.flush()
-                }
                 let workplace = Reach.workplace(of: container)
                 let context = try await services.retrieval.linkContext(for: container)
                 let linking = try await services.retrieval.notesLinking(
@@ -487,9 +480,6 @@ extension AppModel {
             try await services.catalog.update(saved)
             await model.reloadSpaces()
             await model.noteChanged(changed)
-            if let open = model.session?.ref, changed.contains(open) {
-                await model.session?.reload()
-            }
             return updateSpaceStep(current)
         }
     }
@@ -497,10 +487,10 @@ extension AppModel {
     private static func trashSpaceStep(_ id: SpaceID) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services, let space = model.space(id) else { return nil }
-            if let open = model.session?.ref, open.container == .space(id) {
-                await model.session?.flush()
-            }
             let trashed = try await services.catalog.trashSpace(id)
+            if let open = model.session?.ref, open.container == .space(id) {
+                model.session?.noteWasTrashed()
+            }
             await model.reloadSpaces()
             model.contentChanged()
             guard let trashed else { return nil }
@@ -555,6 +545,14 @@ extension AppModel {
             }
         }
         return changed
+    }
+
+    /// Where a note inside `old` is once that folder (or file) became `new`, in `container`.
+    static func place(of note: NoteRef, after old: ItemPath, became new: ItemPath, in container: Container) -> NoteRef?
+    {
+        let rest = note.path.components.dropFirst(old.components.count)
+        guard let path = ItemPath((new.components + rest).joined(separator: "/")) else { return nil }
+        return NoteRef(container: container, path: path)
     }
 
     /// Every place in the history that showed `old` or a folder inside it now shows the renamed one.

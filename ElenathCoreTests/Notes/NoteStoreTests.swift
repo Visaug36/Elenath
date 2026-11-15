@@ -197,6 +197,45 @@ struct NoteStoreTests {
         #expect(try fixture.read("Uni/Deep/Folder/Plan.md").hasSuffix("still here\n"))
     }
 
+    @Test("A note whose space folder is gone isn't written again: the folder doesn't come back")
+    func spaceFolderGone() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let uni = try await fixture.space("Uni")
+        let created = try await fixture.notes.create(title: "Plan", in: .root, container: .space(uni.id), body: "v1")
+        try FileManager.default.moveItem(at: fixture.url("Uni"), to: fixture.url("Moved away"))
+
+        var mine = try #require(created.text)
+        mine.body = "still here\n"
+        await #expect(throws: NoteStoreError.notFound) {
+            try await fixture.notes.save(mine, to: created.ref, expecting: created.stamp)
+        }
+        await #expect(throws: NoteStoreError.notFound) {
+            try await fixture.notes.create(title: "Another", in: .root, container: .space(uni.id))
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.url("Uni").path))
+    }
+
+    @Test("Nothing is written into a library whose folder is gone, not even the Inbox")
+    func libraryFolderGone() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let created = try await fixture.notes.create(title: "Thought", in: .root, container: .inbox, body: "v1")
+        let elsewhere = fixture.root.deletingLastPathComponent().appending(component: "Moved library")
+        try FileManager.default.moveItem(at: fixture.root, to: elsewhere)
+        defer { try? FileManager.default.removeItem(at: elsewhere) }
+
+        var mine = try #require(created.text)
+        mine.body = "still here\n"
+        await #expect(throws: NoteStoreError.notFound) {
+            try await fixture.notes.save(mine, to: created.ref, expecting: created.stamp)
+        }
+        await #expect(throws: NoteStoreError.notFound) {
+            try await fixture.notes.create(title: "Rescued", in: .root, container: .inbox, body: "text")
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.path))
+    }
+
     @Test("A save that is cut off halfway leaves the old note whole")
     func interruptedSave() async throws {
         let fixture = try await LibraryFixture()

@@ -118,9 +118,14 @@ final class AppModel {
     var importStatus: ImportStatus? = nil
     @ObservationIgnored var importTask: Task<Void, Never>?
     @ObservationIgnored var importDismissal: Task<Void, Never>?
-    /// Notes renamed or moved outside Elenath whose links can be updated: the banner at the foot of the
-    /// window.
-    var linkRepairOffer: LinkRepairOffer? = nil
+    /// Notes renamed or moved outside Elenath whose links can be updated, by the container they moved in.
+    /// The banner at the foot of the window shows one the current workplace may read about.
+    var linkRepairOffers: [Container: LinkRepairOffer] = [:]
+    /// Places Elenath's own steps just wrote to: a move the index sees there is Elenath's, not Finder's.
+    @ObservationIgnored var ownChanges: [OwnChange] = []
+    /// Edits that couldn't be saved before Elenath last closed, kept in its Recovery folder: an alert offers
+    /// to put them in the Inbox.
+    var recoveredEdits: [URL] = []
     /// How many of Elenath's own steps are running. The watcher's changes wait for them, so a rename
     /// Elenath made is never taken for one made in Finder.
     @ObservationIgnored var stepsInFlight = 0
@@ -320,6 +325,8 @@ final class AppModel {
 
     private func closeSession() {
         guard let closing = session else { return }
+        // Now, while its text view is still there: SwiftUI takes the view down before the save below runs.
+        closing.captureText()
         session = nil
         closingSessions.append(closing)
         Task {
@@ -338,11 +345,16 @@ final class AppModel {
         (session?.hasUnsavedChanges ?? false) || !closingSessions.isEmpty
     }
 
-    /// Saves what is open and waits for notes that are still being saved, or until `timeout` passes.
+    /// Saves what is open and waits until every edit is on disk, or until `timeout` passes. Indexing
+    /// isn't waited for: the index catches up at the next launch.
     func finishPendingSaves(timeout: Duration) async {
         let deadline = ContinuousClock.now + timeout
-        await session?.flush()
-        while !closingSessions.isEmpty, ContinuousClock.now < deadline {
+        if let session {
+            Task {
+                await session.saveEverything(tellsUser: false)
+            }
+        }
+        while hasPendingSaves, ContinuousClock.now < deadline {
             do {
                 try await Task.sleep(for: .milliseconds(20))
             } catch {
@@ -560,6 +572,9 @@ final class AppModel {
         watchedRootPath = nil
         changeTask?.cancel()
         pendingChange = LibraryChange()
+        linkRepairOffers = [:]
+        ownChanges = []
+        recoveredEdits = []
         closeSession()
         services = nil
         spaces = []
@@ -754,6 +769,7 @@ final class AppModel {
         state = .ready
         startWatching(root)
         startIndexing()
+        findRecoveredEdits()
     }
 
     func rememberFolder(_ folder: SavedFolder) {
@@ -854,6 +870,22 @@ final class AppModel {
             changeTask = nil
             await processPendingChange()
         }
+    }
+
+    /// Stops looking at the folder, and forgets what was seen and not handled yet: while the library is
+    /// being moved, files leaving must not look like changes to react to.
+    func pauseWatching() {
+        watcher?.stop()
+        watcher = nil
+        changeTask?.cancel()
+        changeTask = nil
+        pendingChange = LibraryChange()
+    }
+
+    /// Looks at the folder again after `pauseWatching`, when the library stays where it is.
+    func resumeWatching() {
+        guard watcher == nil, state == .ready, let rootURL else { return }
+        startWatching(rootURL)
     }
 
     /// Called when the last running step is done: handles what the watcher saw meanwhile.

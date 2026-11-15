@@ -117,12 +117,14 @@ public actor NoteStore {
     ///
     /// If the file still has the bytes it had then, it is replaced atomically. If it changed meanwhile,
     /// it is left alone and `text` is saved beside it as "Title (conflict 2026-11-10 14.30).md". If it is
-    /// gone, it is written again. A note without an `id` gets one, with a `created` date: this is the
-    /// first edit of a note that came from elsewhere.
+    /// gone, it is written again, unless its space's folder (or the whole library) is gone too: then
+    /// `notFound` is thrown, and nothing brings that folder back. A note without an `id` gets one, with a
+    /// `created` date: this is the first edit of a note that came from elsewhere.
     public func save(_ text: NoteText, to ref: NoteRef, expecting stamp: DiskStamp) async throws -> SaveOutcome {
         let url = try await writableNoteURL(ref)
         var text = text
         guard let info = fileSystem.info(at: url), !info.isDirectory else {
+            try await requireContainerFolder(ref.container)
             addIdentity(to: &text, created: timeSource.now)
             try fileSystem.createDirectory(at: url.deletingLastPathComponent())
             return .recreated(try write(text, to: url, as: ref))
@@ -151,13 +153,15 @@ public actor NoteStore {
         return .saved(try write(text, to: url, as: ref))
     }
 
-    /// Makes a new note in `folder`, which is created if it isn't there. The title is made safe as a
-    /// name, and a title that is taken gets a number, as in Finder.
+    /// Makes a new note in `folder`, which is created if it isn't there (but never a space's folder or
+    /// the library's: `notFound` when those are gone). The title is made safe as a name, and a title that
+    /// is taken gets a number, as in Finder.
     public func create(
         title: String, in folder: ItemPath, container: Container, kind: NoteKind = .note, body: String = "",
         created: Date? = nil
     ) async throws -> LoadedNote {
         let folderURL = try await writableFolderURL(folder, in: container)
+        try await requireContainerFolder(container)
         try fileSystem.createDirectory(at: folderURL)
         let name = availableNoteName(for: NameSanitizer.sanitizedTitle(title) + ".md", in: folderURL)
         guard let path = folder.appending(name) else { throw NoteStoreError.notANote }
@@ -427,6 +431,18 @@ public actor NoteStore {
     private func writableNoteURL(_ ref: NoteRef) async throws -> URL {
         try await requireWritable(ref.container)
         return try await noteURL(ref)
+    }
+
+    /// Throws `notFound` when the folder that holds `container` is gone: a space's folder that was deleted
+    /// or moved away, or for the Inbox the library's folder. Writing a note there would bring back a
+    /// stray folder where the library used to be.
+    private func requireContainerFolder(_ container: Container) async throws {
+        let folder =
+            switch container {
+            case .inbox: catalog.root
+            case .space: try await catalog.folderURL(of: container)
+            }
+        guard fileSystem.info(at: folder)?.isDirectory == true else { throw NoteStoreError.notFound }
     }
 
     private func requireWritable(_ container: Container) async throws {

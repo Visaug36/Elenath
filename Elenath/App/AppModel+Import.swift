@@ -246,6 +246,8 @@ extension AppModel {
     /// beside it. Throws when it couldn't be saved, so the panel keeps the text.
     func capture(_ text: String, attachments: [CaptureAttachment]) async throws -> NoteRef {
         guard let services, state == .ready else { throw NoteStoreError.readOnly }
+        // While the library moves, nothing is written into it; the panel keeps the text.
+        guard !isMovingLibrary else { throw LibraryMoveError.moving }
         let now = timeSource.now
         var draft = captureDraft(for: text)
         if draft == nil, !attachments.isEmpty {

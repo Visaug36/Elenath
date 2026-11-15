@@ -23,6 +23,7 @@ struct MainView: View {
             .modifier(RecoveryAlert())
             .modifier(FolderErrorAlert())
             .modifier(OperationErrorAlert())
+            .modifier(RecoveredEditsAlert())
             .onAppear {
                 model.undoManager = undoManager
             }
@@ -51,7 +52,7 @@ struct MainView: View {
                 LibraryWindow()
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         VStack(spacing: 0) {
-                            if let offer = model.linkRepairOffer {
+                            if let offer = model.visibleLinkRepairOffer {
                                 LinkRepairBanner(offer: offer)
                             }
                             if model.isReadOnly {
@@ -128,6 +129,34 @@ private struct ReadOnlyBanner: View {
                 .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// When the library opens with edits kept in Recovery: offers to put them in the Inbox.
+private struct RecoveredEditsAlert: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        let count = model.recoveredEdits.count
+        let isPresented = Binding(
+            get: { !model.recoveredEdits.isEmpty },
+            set: { shown in
+                if !shown {
+                    model.postponeRecoveredEdits()
+                }
+            })
+        content.alert("Elenath kept edits it couldn't save", isPresented: isPresented) {
+            Button("Put Them in the Inbox") {
+                model.putRecoveredEditsInInbox()
+            }
+            Button("Later", role: .cancel) {
+                model.postponeRecoveredEdits()
+            }
+        } message: {
+            Text(
+                "^[\(count) note](inflect: true) couldn't be saved before Elenath closed. The text is safe: put it in the Inbox to look at it."
+            )
+        }
     }
 }
 

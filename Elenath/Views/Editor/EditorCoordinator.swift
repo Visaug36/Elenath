@@ -8,7 +8,7 @@ import SwiftUI
 struct MarkdownEditor: NSViewRepresentable {
     let session: EditorSession
     let model: AppModel
-    /// Goes up when the text view must show `session.bodyToShow`.
+    /// Goes up when the text view must show the session's text again.
     let bodyGeneration: Int
     /// Goes up when notes changed somewhere: links and backlinks are looked up again.
     let contentRevision: Int
@@ -169,10 +169,11 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         }
     }
 
+    /// The text view is going away: the session keeps its text first.
     func detach() {
         linkContextTask?.cancel()
+        session.detachTextView(self)
         textUndoManager.removeAllActions()
-        session.currentBody = nil
         textView?.delegate = nil
         textView?.textStorage?.delegate = nil
     }
@@ -197,20 +198,21 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
 
     // MARK: - The text
 
-    /// Puts the session's text into the text view and styles it.
+    /// Puts the session's text into the text view and styles it. The session reads the text view's text
+    /// from now on; a text view that showed the note before hands over what was typed in it.
     private func showBody() {
         guard let textView, let storage = textView.textStorage else { return }
         let previousSelection = textView.selectedRange()
         let hadText = storage.length > 0
+        let body = session.attachTextView(self) { [weak textView] in
+            textView?.string
+        }
         storage.beginEditing()
-        storage.setAttributedString(NSAttributedString(string: session.bodyToShow, attributes: styler.baseAttributes))
+        storage.setAttributedString(NSAttributedString(string: body, attributes: styler.baseAttributes))
         storage.endEditing()
         pendingEdit = nil
         styler.restyleAll(storage)
         textUndoManager.removeAllActions()
-        session.currentBody = { [weak textView] in
-            textView?.string ?? ""
-        }
         let length = storage.length
         if !model.pendingHighlight.isEmpty {
             highlight(model.pendingHighlight)

@@ -62,9 +62,12 @@ enum LibraryMoveError: Error, LocalizedError {
     case stillSaving
     case folderChanged
     case importRunning
+    /// Something tried to write while the library moves.
+    case moving
 
     var errorDescription: String? {
         switch self {
+        case .moving: String(localized: "Elenath is moving your library. Try again in a moment; your text is kept.")
         case .notReady: String(localized: "The library can't be moved right now.")
         case .stillSaving: String(localized: "A note is still being saved. Try again in a moment.")
         case .folderChanged: String(localized: "The folder changed while Elenath looked at it. Choose it again.")
@@ -75,16 +78,25 @@ enum LibraryMoveError: Error, LocalizedError {
 
 /// Changing the library's folder (Settings › Files).
 extension AppModel {
-    /// Moves the library into the folder `chosen` stands for, and opens it there. Every save waits for
-    /// the move, which goes back entirely if one item can't move.
+    /// Moves the library into the folder `chosen` stands for, and opens it there. The move goes back
+    /// entirely if one item can't move.
+    ///
+    /// Nothing writes into the library while it moves: the open note is closed and saved first, nothing
+    /// can be edited, captured or imported (`canEdit` is false), and the folder watcher is paused, so
+    /// files leaving don't look like changes to react to.
     func moveLibrary(toChosen chosen: URL) async throws {
         guard !isDemo, canEdit, let oldRoot = rootURL else { throw LibraryMoveError.notReady }
         guard importTask == nil else { throw LibraryMoveError.importRunning }
+        guard stepsInFlight == 0 else { throw LibraryMoveError.stillSaving }
         isMovingLibrary = true
         defer { isMovingLibrary = false }
+        if case .note = route {
+            go(to: .today)
+        }
         await finishPendingSaves(timeout: .seconds(10))
         guard !hasPendingSaves else { throw LibraryMoveError.stillSaving }
-        let newRoot = try await Task.detached(priority: .userInitiated) { () throws -> URL in
+        pauseWatching()
+        let moving = Task.detached(priority: .userInitiated) { () throws -> URL in
             guard case .move(_, let newRoot) = LibraryFolderChoice.evaluate(chosen, currentRoot: oldRoot) else {
                 throw LibraryMoveError.folderChanged
             }
@@ -99,7 +111,14 @@ extension AppModel {
                 throw error
             }
             return newRoot
-        }.value
+        }
+        let newRoot: URL
+        do {
+            newRoot = try await moving.value
+        } catch {
+            resumeWatching()
+            throw error
+        }
         isMovingLibrary = false
         useFolder(newRoot)
     }

@@ -16,35 +16,63 @@ enum EditorBanner: Equatable {
     case missing
 }
 
+/// What closing a note had to do with edits it couldn't save where the note was.
+enum EditorSessionNotice: Error, LocalizedError {
+    /// The file was gone, so the edits became a note of their own in the Inbox.
+    case rescued(title: String, copy: String)
+    /// Nothing could be written to the library: the text is in Elenath's Recovery folder.
+    case keptInRecovery(title: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .rescued(let title, let copy):
+            String(
+                localized:
+                    "“\(title)” was moved or deleted outside Elenath while it had unsaved edits. They are in the Inbox as “\(copy)”."
+            )
+        case .keptInRecovery(let title):
+            String(
+                localized:
+                    "Elenath couldn't save “\(title)”. Its text is kept, and Elenath offers to put it in the Inbox the next time the library opens."
+            )
+        }
+    }
+}
+
 /// One open note: what the editor shows, autosave, and what happens when the file changes underneath.
 ///
-/// The text view holds the body while the note is open. The session asks it for the text when it saves
-/// (`currentBody`), and hands it new text only when the note is loaded or loaded again
-/// (`bodyGeneration`).
+/// The text view holds the body while the note is open. It registers with `attachTextView`, and the
+/// session reads its text when it saves. The session keeps the newest text it has read in
+/// `bodyToShow`: when the text view goes away (the window closes, the note is closed) the session takes
+/// its text first, so a text view made later shows what was typed and a save after that still has it.
 ///
 /// - **Autosave** half a second after the last change, and at once when the note is closed, the window
 ///   closes or the app quits. A save is atomic and never overwrites a change made elsewhere.
+/// - **Elenath's own steps** (a rename, a move, ticking a task from a list, updating links) save what is
+///   typed first and write nothing until they are done (`beginStep`, `endStep`). Then the note shows
+///   what the step did to it, and what was typed meanwhile is saved where the note is now.
 /// - **Changed on disk:** without unsaved edits the editor shows the new text. With unsaved edits both
 ///   versions are kept: the edits go into "Title (conflict …)" and the session moves there.
+/// - **The file is gone:** nothing is written until the user says (Save It Again). Closing the note with
+///   unsaved edits puts them in a new note in the Inbox.
 /// - **A save that fails** keeps the text in the editor, puts a copy in Elenath's Recovery folder, says
-///   so and tries again.
+///   so and tries again. If the note is closed before a save works, the user is told.
 @Observable @MainActor
 final class EditorSession {
     private(set) var ref: NoteRef
     private(set) var isLoading = true
     private(set) var isReadOnly = false
     private(set) var banner: EditorBanner? = nil
-    /// The text for the text view. It changes only when the note is loaded.
-    private(set) var bodyToShow = ""
-    /// Goes up every time `bodyToShow` must be put into the text view.
+    /// Goes up every time the text view must show `bodyToShow` again: the note was loaded or reloaded.
     private(set) var bodyGeneration = 0
     private(set) var kind: NoteKind = .note
     private(set) var tags: [String] = []
     /// When the file last changed, for "Edited 14:30".
     private(set) var modified: Date? = nil
 
-    /// The text in the editor right now. Set by the text view.
-    @ObservationIgnored var currentBody: (@MainActor () -> String)?
+    /// The newest text the session knows: as loaded, or as last read from the text view. A text view
+    /// that is made shows this.
+    @ObservationIgnored private(set) var bodyToShow = ""
 
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private let services: LibraryServices?
@@ -53,9 +81,17 @@ final class EditorSession {
     @ObservationIgnored private var isDirty = false
     /// The file is gone and the user hasn't said what to do: nothing is written until they do.
     @ObservationIgnored private var isDetached = false
+    /// Elenath itself moved the note to the Trash while it was open: nothing is written to its place.
+    @ObservationIgnored private var wasTrashed = false
+    /// How many of Elenath's own steps are running since this note was open. Nothing is saved meanwhile.
+    @ObservationIgnored private var holds = 0
     @ObservationIgnored private var autosave: Task<Void, Never>?
-    @ObservationIgnored private var saving: Task<Void, Never>?
+    /// The write in progress. It gives the notes to index again, which is done after the write is over.
+    @ObservationIgnored private var saving: Task<[NoteRef], Never>?
     @ObservationIgnored private var needsFreshIdentity = false
+    /// The text view showing the note, and how to read its text (nil once that view is gone).
+    @ObservationIgnored private var textViewOwner: ObjectIdentifier?
+    @ObservationIgnored private var readTextView: (@MainActor () -> String?)?
     private nonisolated static let log = CoreLog(category: "EditorSession")
 
     init(ref: NoteRef, model: AppModel) {
@@ -116,6 +152,37 @@ final class EditorSession {
         }
     }
 
+    // MARK: - The text view
+
+    /// A text view takes over showing the note, and gives a way to read its text (nil once it is gone).
+    /// Returns the text it must show. If another text view still shows the note, its text is read
+    /// first, so nothing typed there is lost.
+    func attachTextView(_ owner: AnyObject, read: @escaping @MainActor () -> String?) -> String {
+        let id = ObjectIdentifier(owner)
+        if textViewOwner != id {
+            captureText()
+        }
+        textViewOwner = id
+        readTextView = read
+        return bodyToShow
+    }
+
+    /// The text view stops showing the note: its text is kept first.
+    func detachTextView(_ owner: AnyObject) {
+        guard textViewOwner == ObjectIdentifier(owner) else { return }
+        captureText()
+        textViewOwner = nil
+        readTextView = nil
+    }
+
+    /// Takes the text view's text as the newest text. Called on every save, and synchronously whenever
+    /// the text view may go away.
+    func captureText() {
+        if let text = readTextView?() {
+            bodyToShow = text
+        }
+    }
+
     // MARK: - Editing
 
     /// The text view changed. Saves half a second after the last change.
@@ -169,28 +236,65 @@ final class EditorSession {
         }
     }
 
-    /// Saves now if there is anything to save, and waits until it is on disk.
+    /// Saves now if there is anything to save, and waits until it is on disk and indexed. While one of
+    /// Elenath's steps runs, it saves nothing: the step's end does.
     func flush() async {
         autosave?.cancel()
         autosave = nil
         await save()
     }
 
-    /// The note is being closed.
+    /// The note is being closed: everything is saved (`saveEverything`), and the text view is let go.
     func close() async {
+        await saveEverything(tellsUser: true)
+        readTextView = nil
+        textViewOwner = nil
+    }
+
+    /// Waits for Elenath's steps to finish with the note, saves what is left, and makes sure no edit is
+    /// dropped: edits to a file that is gone become a note in the Inbox, and edits that can't be saved
+    /// go to Recovery (offered at the next launch). When `tellsUser`, an alert says where the edits
+    /// went. Used when the note closes and (without the alert) when the app quits.
+    func saveEverything(tellsUser: Bool) async {
+        while holds > 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        captureText()
         await flush()
-        currentBody = nil
+        guard isDirty else { return }
+        if wasTrashed {
+            // Typed while the note went to the Trash.
+            await keepRecoveryCopy(of: editedText())
+            isDirty = false
+        } else if isDetached {
+            await rescueEdits(tellsUser: tellsUser)
+        } else {
+            // The save failed. The newest text goes to Recovery as well.
+            await keepRecoveryCopy(of: editedText())
+            isDirty = false
+            if tellsUser {
+                model?.report(EditorSessionNotice.keptInRecovery(title: ref.title))
+            }
+        }
+    }
+
+    /// The text as it would be saved now.
+    private func editedText() -> NoteText {
+        var edited = text ?? NoteText(body: "")
+        edited.body = bodyToShow
+        return edited
     }
 
     private func save() async {
-        // One save at a time. A request that arrives meanwhile waits, then saves what changed since.
+        // One write at a time. A request that arrives meanwhile waits, then saves what changed since.
         if let saving {
-            await saving.value
+            _ = await saving.value
         }
-        guard isDirty, !isReadOnly, !isDetached, var edited = text, let stamp, services != nil else { return }
-        if let currentBody {
-            edited.body = currentBody()
+        guard isDirty, holds == 0, !isReadOnly, !isDetached, var edited = text, let stamp, services != nil else {
+            return
         }
+        captureText()
+        edited.body = bodyToShow
         if needsFreshIdentity {
             // A duplicated file carries its original's id. This one gets its own.
             edited.frontMatter?.id = NoteID()
@@ -202,12 +306,19 @@ final class EditorSession {
             await self.write(edited, to: target, expecting: stamp)
         }
         saving = task
-        await task.value
-        saving = nil
+        let changed = await task.value
+        if saving == task {
+            saving = nil
+        }
+        // Indexing waits behind other work on the index; the next save doesn't wait for it.
+        if !changed.isEmpty {
+            await model?.noteChanged(changed)
+        }
     }
 
-    private func write(_ edited: NoteText, to target: NoteRef, expecting stamp: DiskStamp) async {
-        guard let services else { return }
+    /// Writes the note and returns the notes to index again.
+    private func write(_ edited: NoteText, to target: NoteRef, expecting stamp: DiskStamp) async -> [NoteRef] {
+        guard let services else { return [] }
         do {
             switch try await services.notes.save(edited, to: target, expecting: stamp) {
             case .saved(let note), .recreated(let note):
@@ -215,7 +326,7 @@ final class EditorSession {
                 if case .saveFailed = banner {
                     banner = nil
                 }
-                await model?.noteChanged([note.ref])
+                return [note.ref]
             case .conflict(let mine, _):
                 // The file changed elsewhere. The edits are in a note of their own now, and that is the
                 // one that stays open.
@@ -223,26 +334,35 @@ final class EditorSession {
                 adopt(mine)
                 banner = .conflict(original: target)
                 model?.sessionMoved(from: target, to: mine.ref)
-                await model?.noteChanged([target, mine.ref])
+                return [target, mine.ref]
             }
+        } catch NoteStoreError.notFound {
+            // The note's space, or the whole library, is gone: as for a file that is gone, nothing is
+            // written until the user says, and closing puts the edits somewhere safe.
+            isDirty = true
+            isDetached = true
+            banner = .missing
+            return []
         } catch {
             EditorSession.log.error("A note could not be saved", private: String(describing: error))
             isDirty = true
             banner = .saveFailed(error.localizedDescription)
-            keepRecoveryCopy(of: edited)
+            await keepRecoveryCopy(of: edited)
             scheduleAutosave(after: .seconds(5))
+            return []
         }
     }
 
-    /// Puts the text that couldn't be saved into Elenath's own Recovery folder, so it survives even if
-    /// the app is quit before the library can be written again.
-    private func keepRecoveryCopy(of edited: NoteText) {
+    /// Puts text that couldn't be saved into Elenath's own Recovery folder, so it survives even if the app
+    /// is quit before the library can be written again. The name has the time, so copies don't replace
+    /// one another; the next time the library opens, Elenath offers to put them in the Inbox.
+    private func keepRecoveryCopy(of edited: NoteText) async {
         guard let services, let libraryID = model?.libraryID else { return }
         let folder = services.support.recovery.appending(
             component: libraryID.rawValue.uuidString, directoryHint: .isDirectory)
-        let name = NameSanitizer.sanitizedTitle(ref.title) + ".md"
+        let name = NameSanitizer.sanitizedTitle("\(ref.title) \(EditorSession.recoveryStamp())") + ".md"
         let data = edited.data()
-        Task.detached(priority: .utility) {
+        await Task.detached(priority: .utility) {
             let fileSystem = LocalFileSystem()
             do {
                 try fileSystem.createDirectory(at: folder)
@@ -250,6 +370,37 @@ final class EditorSession {
                     data, to: folder.appending(component: name, directoryHint: .notDirectory))
             } catch {
                 EditorSession.log.error("Could not keep a recovery copy", private: String(describing: error))
+            }
+        }.value
+    }
+
+    /// "2026-11-10 14.30.05", for the names of recovery copies.
+    private nonisolated static func recoveryStamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        return formatter.string(from: .now)
+    }
+
+    /// The file is gone and the note is closing with unsaved edits: they become a note of their own in
+    /// the Inbox, named like a conflict copy, and the user is told. If that can't be written either,
+    /// they go to Recovery.
+    private func rescueEdits(tellsUser: Bool) async {
+        guard let services else { return }
+        let title = NameSanitizer.conflictTitle(for: ref.title, now: .now, timeZone: .current)
+        do {
+            let copy = try await services.notes.create(
+                title: title, in: .root, container: .inbox, kind: kind, body: bodyToShow)
+            isDirty = false
+            if tellsUser {
+                model?.report(EditorSessionNotice.rescued(title: ref.title, copy: copy.ref.title))
+            }
+            await model?.noteChanged([copy.ref])
+        } catch {
+            await keepRecoveryCopy(of: editedText())
+            isDirty = false
+            if tellsUser {
+                model?.report(EditorSessionNotice.keptInRecovery(title: ref.title))
             }
         }
     }
@@ -261,19 +412,52 @@ final class EditorSession {
         }
     }
 
+    // MARK: - Elenath's own steps
+
+    /// One of Elenath's steps is about to change notes or folders: what was typed is saved first, and
+    /// nothing is written again until `endStep`.
+    func beginStep() async {
+        await flush()
+        holds += 1
+    }
+
+    /// The step is done. The note shows what the step did to it, and what was typed meanwhile is saved
+    /// where the note is now.
+    func endStep() async {
+        holds = max(holds - 1, 0)
+        guard holds == 0 else { return }
+        if wasTrashed {
+            return
+        }
+        await fileMayHaveChanged()
+        if isDirty {
+            await flush()
+        }
+    }
+
+    /// Elenath moved this note to the Trash: nothing is written to its place again.
+    func noteWasTrashed() {
+        wasTrashed = true
+        isDetached = true
+    }
+
     // MARK: - Changes from outside
 
-    /// The watcher saw the file change, or everything may have changed.
+    /// The watcher saw the file change, or everything may have changed, or one of Elenath's steps is done.
     func fileMayHaveChanged() async {
-        guard let services, !isLoading else { return }
+        guard let services, !isLoading, !wasTrashed else { return }
         do {
             let onDisk = try await services.notes.read(ref)
             if isDetached {
                 // The file is back.
+                isDetached = false
+                if banner == .missing {
+                    banner = nil
+                }
                 if !isDirty {
                     show(onDisk)
+                    return
                 }
-                return
             }
             guard let stamp, !onDisk.stamp.hasSameContent(as: stamp) else { return }
             if hasUnsavedChanges {
@@ -304,13 +488,10 @@ final class EditorSession {
 
     /// "Save It Again" on the banner of a note whose file is gone: writes it back where it was.
     func saveAgain() {
-        guard isDetached, var edited = text else { return }
-        if let currentBody {
-            edited.body = currentBody()
-        }
+        guard isDetached, !wasTrashed, text != nil else { return }
+        captureText()
         isDetached = false
         banner = nil
-        text = edited
         isDirty = true
         Task {
             await flush()

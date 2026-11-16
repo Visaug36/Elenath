@@ -40,8 +40,11 @@ struct NoteHeaderView: View {
                 isTitleFocused = true
             }
         }
-        .onChange(of: session.ref) { _, ref in
-            if !isTitleFocused {
+        .onChange(of: session.ref) { old, ref in
+            // A rename or move from elsewhere (a step, Finder, undo) wins over a title the user hasn't
+            // changed. Otherwise the field would keep the old title and give it back to the note when it
+            // loses focus.
+            if !isTitleFocused || title.trimmingCharacters(in: .whitespacesAndNewlines) == old.title {
                 title = ref.title
             }
         }

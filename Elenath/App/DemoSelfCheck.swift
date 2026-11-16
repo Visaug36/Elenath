@@ -144,7 +144,10 @@ final class DemoSelfCheck {
         try await act("rename it") { self.model.rename(created, to: "Self check renamed") }
         let renamed = NoteRef(container: container, path: ItemPath("Self check renamed.md")!)
         let folder = model.folders(in: container).first ?? .root
-        try await act("move it") { self.model.move(renamed, to: folder, in: container) }
+        try await act("move it to \(folder.description.isEmpty ? "the top" : folder.description)") {
+            self.model.move(renamed, to: folder, in: container)
+        }
+        say("SELF-CHECK   the notes in Uni: \(demoFiles(in: space))")
         try await undo(times: 2)
         try await redo(times: 2)
         let moved = NoteRef(container: container, path: folder.appending("Self check renamed.md")!)
@@ -187,8 +190,26 @@ final class DemoSelfCheck {
         body()
         try await stepsDone()
         if let error = model.operationError {
+            say("SELF-CHECK   the open note: \(model.session?.ref.path.description ?? "none")")
+            say("SELF-CHECK   the notes in Uni: \(demoFiles(in: try uni()))")
             throw Failure(description: "\(name): the app reported: \(error)")
         }
+    }
+
+    /// The Markdown files of a space of the demo library, by path: to see where notes really are when an
+    /// action fails. Only ever the invented demo library.
+    private func demoFiles(in space: Space) -> String {
+        guard let folder = model.url(for: .root, in: .space(space.id), isDirectory: true),
+            let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)
+        else { return "(no folder)" }
+        var paths: [String] = []
+        let base = folder.standardizedFileURL.path
+        while let url = walker.nextObject() as? URL {
+            guard url.pathExtension == "md" else { continue }
+            let path = url.standardizedFileURL.path
+            paths.append(path.hasPrefix(base) ? String(path.dropFirst(base.count)) : url.lastPathComponent)
+        }
+        return paths.sorted().joined(separator: ", ")
     }
 
     /// Undoes a move to the Trash. In the App Sandbox Elenath may not take an item back out of the Trash

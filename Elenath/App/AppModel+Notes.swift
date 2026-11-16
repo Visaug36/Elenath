@@ -29,10 +29,12 @@ extension AppModel {
         // An undo or redo that fails leaves the files unlike what the older steps expect, so those are
         // dropped rather than fail one after another.
         let isUndoOrRedo = undoManager?.isUndoing == true || undoManager?.isRedoing == true
-        // The open note saves what was typed before the step, and nothing while it runs; afterwards it
-        // shows what the step did and saves what was typed meanwhile, where the note is then.
-        let open = session
+        let previous = lastStep
         let work = Task { @MainActor () -> UndoableStep? in
+            await previous?.value
+            // The note open when the step starts saves what was typed before it, and nothing while it runs;
+            // afterwards it shows what the step did and saves what was typed meanwhile, where the note is then.
+            let open = self.session
             await open?.beginStep()
             let inverse: UndoableStep?
             do {
@@ -49,6 +51,7 @@ extension AppModel {
             self.stepsFinished()
             return inverse
         }
+        lastStep = Task { _ = await work.value }
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {

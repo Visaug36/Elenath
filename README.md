@@ -26,14 +26,17 @@ the same principles. Every note is a star, and links are the lines between them.
 ## Status
 
 Elenath is being built in the open, one phase at a time. **Version 0.1 is for notes**: everything below under
-"What it does" works. Nano bot, the assistant, arrives in 0.2.
+"What it does" works. The calendar arrives in 0.2, and Nano bot, the assistant, in 0.4.
 
 | Version | What it adds |
 |---|---|
 | 0.0.1 | The themed window, Settings with the appearance choice, the folder format |
 | 0.1 | The library, spaces and sealing, the editor, Inbox and Quick Capture, links, tags, tasks, keyword search, import, Today |
-| 0.2 | Search by meaning, text in PDFs and pictures, and Nano bot: filing the Inbox, links, tidying, summaries, answers from your notes |
-| later | The bridge to Ithil, boards and charts, goals and the Sky |
+| 0.1.1 | A review for errors and security problems, with every finding fixed and tested, and a crash check on every build |
+| 0.2 | The calendar: everything Ithil does, in the same library folder, so Elenath is the only app to open |
+| 0.3 | Search by meaning, related notes, and the text in PDFs and pictures |
+| 0.4 | Nano bot: filing the Inbox, links, tidying, summaries, answers from your notes |
+| later | Boards and charts, goals and the Sky, frames |
 
 ## What it does
 
@@ -75,10 +78,13 @@ Elenath is being built in the open, one phase at a time. **Version 0.1 is for no
 
 ### Coming later
 
-- **Nano bot** (0.2), a small assistant that runs on the Mac: it proposes where an Inbox item belongs, which
+- **The calendar** (0.2): everything Ithil does, from Week, Day and Month views to a Finder folder for each
+  event, in the same library folder. Events from every space show on the calendar, and each subject's notes
+  go where they belong.
+- **Search by meaning** (0.3): related notes, and the text inside PDFs and pictures.
+- **Nano bot** (0.4), a small assistant that runs on the Mac: it proposes where an Inbox item belongs, which
   notes to link, a tidier version of a messy dump, and answers questions from your notes. It never changes
   anything by itself.
-- **The bridge to Ithil**: what's up next, and notes for each lecture.
 - **Boards, charts, goals and the Sky**, a map of your notes as stars.
 
 ## Download
@@ -145,7 +151,7 @@ Elenath/
 - Deleting moves to the **Trash**. Elenath never deletes anything permanently.
 - The full contract is in [docs/FORMAT.md](docs/FORMAT.md), so another app could read the same folder.
 
-## Nano bot (from version 0.2)
+## Nano bot (from version 0.4)
 
 Nano bot will use the language model that Apple builds into macOS, on the Mac itself. Version 0.1 has no
 assistant: you file the Inbox by hand.
@@ -165,6 +171,8 @@ assistant: you file the Inbox by hand.
   `~/Library/Containers/io.github.visaug36.Elenath/`.
 - **Sealed spaces stay sealed.** Elenath checks it with tests that plant a word in a sealed space and make sure
   it never shows up in another space's search, links, tags, tasks or Today.
+- **Links in notes open safely.** ⌘-click opens web pages and e-mail at once. A link that would open another
+  app, or a file in your notes that could run as a program, asks first.
 
 ## Backup and moving to a new Mac
 

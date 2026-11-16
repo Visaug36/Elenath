@@ -129,6 +129,9 @@ final class AppModel {
     /// How many of Elenath's own steps are running. The watcher's changes wait for them, so a rename
     /// Elenath made is never taken for one made in Finder.
     @ObservationIgnored var stepsInFlight = 0
+    /// The step that was started last. Each step waits for the one before it, so steps never overlap:
+    /// not when an undo group holds several, and not when ⌘Z is pressed again before the last undo is done.
+    @ObservationIgnored var lastStep: Task<Void, Never>?
 
     /// The main window's undo manager; `MainView` sets it from `@Environment(\.undoManager)`.
     @ObservationIgnored weak var undoManager: UndoManager?

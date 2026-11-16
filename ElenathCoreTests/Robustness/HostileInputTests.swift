@@ -248,6 +248,19 @@ struct HostileInputTests {
 
     // MARK: - Settings files
 
+    @Test("A settings file nested deeper than Elenath writes is refused before it is parsed")
+    func settingsDepth() {
+        func nested(_ depth: Int) -> Data {
+            Data((String(repeating: "[", count: depth) + String(repeating: "]", count: depth)).utf8)
+        }
+        #expect(DocumentCodec.isSafeToParse(nested(DocumentCodec.maximumDepth)))
+        #expect(!DocumentCodec.isSafeToParse(nested(DocumentCodec.maximumDepth + 1)))
+        // Brackets inside strings, escaped quotes included, are text.
+        let quoted = "{\"a\": \"" + String(repeating: "[{", count: 1_000) + "\\\" [[[\"}"
+        #expect(DocumentCodec.isSafeToParse(Data(quoted.utf8)))
+        #expect(!DocumentCodec.isSafeToParse(Data(count: DocumentCodec.maximumByteCount + 1)))
+    }
+
     @Test("library.json and space.json that are garbage, huge or deeply nested are refused cleanly")
     func settingsHostile() {
         var generator = Generator(state: 0x15_0A)

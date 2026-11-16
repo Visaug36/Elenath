@@ -153,7 +153,8 @@ public actor LibraryCatalog {
             // Shown as far as this version understands it, and never written.
             let file = LibraryLayout.metadataFolder(in: root).appending(
                 component: LibraryLayout.libraryFileName, directoryHint: .notDirectory)
-            guard let document = try? JSONDecoder().decode(LibraryDocument.self, from: fileSystem.readData(at: file))
+            guard let data = try? fileSystem.readData(at: file), DocumentCodec.isSafeToParse(data),
+                let document = try? JSONDecoder().decode(LibraryDocument.self, from: data)
             else {
                 throw DocumentStoreError.unreadable("library.json is from a newer Elenath and can't be shown")
             }
@@ -474,7 +475,9 @@ public actor LibraryCatalog {
             // Shown as far as this version understands it. If even that fails, it stays sealed.
             let file = LibraryLayout.spaceMetadataFolder(in: folder).appending(
                 component: LibraryLayout.spaceFileName, directoryHint: .notDirectory)
-            if let document = try? JSONDecoder().decode(SpaceDocument.self, from: fileSystem.readData(at: file)) {
+            if let data = try? fileSystem.readData(at: file), DocumentCodec.isSafeToParse(data),
+                let document = try? JSONDecoder().decode(SpaceDocument.self, from: data)
+            {
                 let space = Self.space(named: folderName, from: document, isReadOnly: true)
                 return LoadedSpace(entry: Entry(space: space, store: store), recovery: nil, sealedByDefault: false)
             }
@@ -568,6 +571,7 @@ public actor LibraryCatalog {
     /// space whose `.space` folder vanished is recognized instead of being taken for a new folder.
     private func readKnownFolders(of libraryID: LibraryID) -> [String: SpaceID] {
         guard let data = try? fileSystem.readData(at: knownFoldersFile(of: libraryID)),
+            DocumentCodec.isSafeToParse(data),
             let stored = try? JSONDecoder().decode([String: SpaceID].self, from: data)
         else { return [:] }
         return stored

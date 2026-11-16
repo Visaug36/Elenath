@@ -888,15 +888,155 @@ assets arriving without a network entitlement; and the folder bookmark surviving
 ad-hoc-signed build. Version 0.1 has a diagnostics report (Settings → Files) that checks all three and can be
 copied.
 
+## Calendar (`ElenathCore/Calendar`): phase 4
+
+Elenath takes over everything Ithil 1.0.0 does. IthilCore's code and its tests are **ported, not
+rewritten**: the files keep their logic and comments, and only what clashes with Elenath's own types is
+renamed. The Ithil repository stays as it is at 1.0.0, and Elenath's repository never depends on it.
+
+### What comes across, and under which names
+
+| Ithil 1.0.0 | Elenath | Notes |
+|---|---|---|
+| `CalendarDate`, `Event`, `EventTiming`, `AlertOffset`, `RecurrenceRule`, `SeriesOccurrence`, `Occurrence` | the same | `ElenathCore/Calendar/Model` |
+| `Subject`, `SubjectColor`, `PaletteColor` | the same | a subject's palette is the spaces' palette |
+| `Library` (the events.json document) | `CalendarDocument` | `Library` would clash with Elenath's library |
+| `CalendarSpan`, `RelativeDay`, `CalendarMath`, `OccurrenceExpander`, `OccurrenceDayMath`, `DayLayout`, `SeriesEditing`, `EventSearch` | the same | `ElenathCore/Calendar/Dates` |
+| `QuickAddDraft`, `QuickAddParser` | the same | `ElenathCore/Calendar/QuickAdd`; `NSDataDetector` behind `#if canImport(Darwin)`, so the core still builds on Linux |
+| `PlannedAlert`, `AlertPlanner`, `NotificationScheduling`, `AlertSynchronizer`, `AlertSyncResult` | the same | identifiers start `elenath.alert.`, so Elenath's alerts never touch Ithil's |
+| `EventFolders`, `EventFoldersError`, `EventFolderMarker`, `EventFile`, `FolderNaming` | the same | `ElenathCore/Calendar/Files` |
+| `LibraryStore`, `LibraryCodec`, `DecodedLibrary`, `LibraryLoad`, `LibraryStoreError`, `RecoveryReport`, `SchemaMigrator` | `DocumentStore<CalendarDocument>`, `DocumentCodec`, `DecodedDocument`, `DocumentLoad`, `DocumentStoreError`, `RecoveryReport`, `SchemaMigrator` | Elenath's store was made from Ithil's; it keeps the same backups, safety copy and recovery |
+| `FileImport`, `FileCopyProgress` | `FileCopier`, `FileCopyProgress` | already ported in 0.1 |
+| `FileSystem`, `LocalFileSystem`, `TimeSource` | Elenath's | already ported in 0.1 |
+| `RootFolderPolicy`, `LibraryMove` | not needed | the calendar lives inside the library and moves with it |
+| `DemoLibrary` | `DemoCalendar` | Ithil's sample week, placed in Elenath's demo library |
+
+Ithil's tests come across into `ElenathCoreTests/Calendar` the same way. Its contracts (docs/ARCHITECTURE.md
+of Ithil 1.0.0: Model, Dates, Storage, Quick Add, Notifications, Files) hold unchanged unless this section
+says otherwise.
+
+### The calendar in the library
+
+```
+<library>/Calendar/                      reserved, like Inbox: never a space
+  .ithil/events.json                     Ithil's format, unchanged (schema version 1)
+  .ithil/backups/events-yyyyMMdd-HHmmss.json
+  2026-11-16/14.00 Physics Lecture/      one folder per occurrence, made when the first file arrives
+  2026-11-16/14.00 Physics Lecture/.ithil-event
+```
+
+```swift
+/// events.json: the subjects and events (Ithil's `Library`).
+public struct CalendarDocument: VersionedDocument {      // fileName "events.json", backups "events-",
+    public var id: UUID                                   // damaged files "events.corrupt-", schema 1
+    public var subjects: [Subject]
+    public var events: [Event]
+}
+
+/// The calendar folder of a library: its store and its event folders.
+public actor CalendarStore {
+    public init(libraryRoot: URL, safetyDirectory: URL, knownCalendarID: UUID?, fileSystem: any FileSystem,
+                timeSource: any TimeSource)
+    public nonisolated let folder: URL                   // <library>/Calendar
+    public func load() throws -> DocumentLoad<CalendarDocument>   // creates an empty calendar the first time
+    public func save(_ document: CalendarDocument) throws
+    public nonisolated let eventFolders: EventFolders     // rooted at the Calendar folder
+}
+```
+
+- **The format on disk is Ithil's.** Elenath writes events.json with Ithil's keys and schema version, so
+  the `Calendar` folder stays a valid Ithil folder, and Ithil 1.0.0 could still open it. Nothing of
+  Elenath's goes into events.json.
+- **The first launch with a calendar** makes `Calendar/.ithil/events.json` with no subjects and no events.
+  A library made by Elenath 0.1 gets its `Calendar` folder then. A top-level folder called `Calendar`
+  that isn't a calendar (no `.ithil`) is never a space; it is offered to the user to rename.
+- **Backups, the safety copy and recovery** are `DocumentStore`'s: `SafetyCopies/<library id>/` holds the
+  calendar's safety copy as `<calendar id>.json`, beside the spaces'.
+
+### Subjects and their homes
+
+```swift
+/// Where a subject's notes go and where its event files are indexed: a space and a folder in it.
+public struct SubjectHome: Codable, Hashable, Sendable {
+    public var space: SpaceID
+    public var folder: ItemPath                           // root when empty
+}
+/// Elenath's own calendar settings, kept in library.json under settings["calendar"], so events.json
+/// stays Ithil's.
+public struct CalendarSettings: Codable, Hashable, Sendable {
+    public var homes: [UUID: SubjectHome]                 // by subject id
+    public init(from settings: [String: JSONValue])
+    public func written(into settings: inout [String: JSONValue])
+}
+```
+
+- A subject without a home, and an event without a subject, have **no home**: never sealed, and their notes
+  go to the Inbox.
+- A home whose space is gone counts as no home.
+- **Sealing follows the home.** An event whose subject's home is a sealed space is a sealed event.
+
+### The sealing exception
+
+The calendar is the one deliberate exception to sealing (CLAUDE.md, "Spaces"):
+
+- **Crosses the seal:** an event's title, time, location and file count, on the calendar, Today, in
+  notifications and the menu bar, and opening its folder in Finder ("Open Files").
+- **Stays sealed:** the event's notes, its files' names and contents, and the notes linked to it. Outside
+  its home space a sealed event is left out of the main search, suggestions, the Sky and anything Nano bot
+  is shown. The calendar's own search finds every event by title and location, and a sealed event never by
+  its notes or files.
+- `CalendarReach` is the calendar's one decision point, beside `Reach`:
+
+```swift
+public struct CalendarReach: Sendable {
+    public init(workplace: Workplace, spaces: [Space], homes: CalendarSettings)
+    /// Whether an event's notes, files and linked notes may be read from the workplace.
+    public func mayReadContent(of event: Event) -> Bool
+    /// The calendar's own search: title and location for every event; notes only where they may be read.
+    public func search(_ document: CalendarDocument, query: String, now: Date,
+                       expander: OccurrenceExpander) -> [Occurrence]
+}
+```
+
+- **Event files are indexed into the home space** (by name in 0.2, by text from 0.3), so `Retrieval` and
+  `Reach` apply to them like any file of that space; files of events without a home go nowhere.
+- The leak tests (`SealingLeakTests`) prove both halves: a marker in a sealed event's notes and in its files'
+  names never comes out of any query or calendar search from outside, and its title, time and location do
+  show on the calendar from everywhere.
+
+### Bringing in an Ithil calendar
+
+```swift
+public struct CalendarImportReport: Hashable, Sendable {
+    public var subjects: Int, events: Int, folders: Int, files: Int     // brought in this time
+    public var alreadyThere: Int                                         // events with an id already present
+    public var countsMatch: Bool                                         // checked after copying
+}
+public enum CalendarImport {
+    /// Copies an Ithil folder's events, subjects and event folders into the library's calendar. The Ithil
+    /// folder is only read. Running it again brings in nothing twice.
+    public static func run(from ithilFolder: URL, into calendar: CalendarStore,
+                           fileSystem: any FileSystem) async throws -> CalendarImportReport
+}
+```
+
+- **Read-only source:** nothing is written inside the Ithil folder; its events.json is read, never
+  recovered or migrated in place. A newer schema is refused with a message.
+- **Copy, check, never duplicate:** subjects and events are merged by id (an id already in Elenath's
+  calendar is left alone), event folders are copied with their markers and files (`FileCopier`, never
+  moved), and afterwards the counts are compared with the source.
+- **Ithil's alerts:** Ithil scheduled its own notifications. The app tells the user how to stop them (quit
+  Ithil and turn off its notifications in System Settings, or delete Ithil), since Elenath can't reach
+  another app's alerts.
+
 ## Later phases
 
 Their contracts are written before each phase starts.
 
 | Phase | Adds |
 |---|---|
-| 3. Meaning | chunking, `Embedder`, vectors, hybrid ranking, related notes, PDF and image text |
-| 4. Nano bot | `BotModel`, the job pipelines, proposals, the activity log, learning, the self-test |
-| 5. Ithil bridge | `IthilReading`, the copied event model and occurrence expansion |
-| 6. Boards and charts | the board package, canvas geometry, chart blocks |
-| 7. Goals and the Sky | goal pages, the cached layout |
-| 8. Polish | frames, the menu bar extra, the accessibility pass |
+| 5. Meaning | chunking, `Embedder`, vectors, hybrid ranking, related notes, PDF and image text (event files too) |
+| 6. Nano bot | `BotModel`, the job pipelines, proposals, the activity log, learning, the self-test, the calendar tools |
+| 7. Boards and charts | the board package, canvas geometry, chart blocks |
+| 8. Goals and the Sky | goal pages, the cached layout |
+| 9. Frames and polish | frames, the accessibility pass |

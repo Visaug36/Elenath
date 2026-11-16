@@ -224,8 +224,9 @@ private struct DocumentReadEnvelope<Document: VersionedDocument>: Decodable {
 }
 
 extension Date {
-    /// This instant without its fraction of a second, the precision documents keep.
-    var roundedToSecond: Date {
+    /// This instant rounded to a whole second, the precision documents keep (events.json included), so
+    /// values that go through a save and load compare equal.
+    public var roundedToSecond: Date {
         Date(timeIntervalSince1970: timeIntervalSince1970.rounded())
     }
 }

@@ -181,11 +181,24 @@ final class SpaceIndex {
 
     let container: Container
     private let database: SQLiteDatabase
+    /// The database file this was opened on, to notice when it has been replaced.
+    private let fileNumber: UInt64?
 
     init(url: URL, container: Container) throws {
         self.container = container
         database = try SQLiteDatabase(url: url)
+        fileNumber = SpaceIndex.fileNumber(at: url)
         try prepareSchema()
+    }
+
+    /// Whether the file at `url` is still the one this was opened on.
+    func isStillOpen(at url: URL) -> Bool {
+        fileNumber != nil && SpaceIndex.fileNumber(at: url) == fileNumber
+    }
+
+    private static func fileNumber(at url: URL) -> UInt64? {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value
     }
 
     /// The file name of a container's database.

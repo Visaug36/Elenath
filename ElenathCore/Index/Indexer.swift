@@ -69,19 +69,25 @@ public actor Indexer {
     /// Brings a container's index in step with its folder, touching only what changed.
     @discardableResult
     public func refresh(_ container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performRefresh(container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performRefresh(container) }
+        }
     }
 
     /// Indexes the given notes again, or drops them when they are gone: what follows a save.
     @discardableResult
     public func update(_ paths: [ItemPath], in container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performUpdate(paths, in: container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performUpdate(paths, in: container) }
+        }
     }
 
     /// Empties a container's index and fills it again from the folder.
     @discardableResult
     public func rebuild(_ container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performRebuild(container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performRebuild(container) }
+        }
     }
 
     /// Refreshes the Inbox and every space. A container that fails is logged and skipped.
@@ -138,6 +144,20 @@ public actor Indexer {
         running += 1
         defer { running -= 1 }
         return try await task.value
+    }
+
+    /// Runs `work`. When the container's database turns out to be damaged, it is thrown away (the index
+    /// is a cache, the folder is the truth) and the whole container is indexed again from the folder.
+    private func replacingDamaged(
+        _ container: Container, _ work: () async throws -> IndexReport
+    ) async throws -> IndexReport {
+        do {
+            return try await work()
+        } catch let error as SQLiteError where error.isDamagedFile {
+            log.error("Replacing a damaged index", private: String(describing: error))
+            removeIndex(of: container)
+            return try await performRefresh(container)
+        }
     }
 
     private func index(for container: Container) throws -> SpaceIndex {

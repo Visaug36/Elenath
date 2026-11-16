@@ -296,8 +296,9 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            let context = try await services.retrieval.linkContext(for: note.container)
-            let linking = try await services.retrieval.linkingNotes(to: note)
+            let workplace = Reach.workplace(of: note.container)
+            let context = try await services.retrieval.linkContext(for: note.container, from: workplace)
+            let linking = try await services.retrieval.linkingNotes(to: note, from: workplace)
             let renamed = try await services.notes.rename(note, to: title)
             guard renamed != note else { return nil }
             model.markOwnChange(renamed.container, renamed.path)
@@ -317,15 +318,18 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            let context = try await services.retrieval.linkContext(for: note.container)
-            let linking = try await services.retrieval.linkingNotes(to: note)
+            let workplace = Reach.workplace(of: note.container)
+            let context = try await services.retrieval.linkContext(for: note.container, from: workplace)
+            let linking = try await services.retrieval.linkingNotes(to: note, from: workplace)
             // Attachments other notes use are copied, not moved. Until the index is complete, all are.
-            let shared = model.isIndexing ? nil : try? await services.retrieval.attachmentNamesShared(by: note)
+            let shared =
+                model.isIndexing
+                ? nil : try? await services.retrieval.attachmentNamesShared(by: note, from: workplace)
             let moved = try await services.notes.move(note, to: folder, in: container, sharedAttachments: shared)
             guard moved != note else { return nil }
             model.markOwnChange(moved.container, moved.path)
             // Links follow the note only where they can still reach it.
-            let reach = Reach(workplace: Reach.workplace(of: note.container), spaces: model.spaces)
+            let reach = Reach(workplace: workplace, spaces: model.spaces)
             let after = reach.allows(moved.container) ? context.moving(note, to: moved) : context.removing(note)
             let changed = await model.rewriteLinks(
                 moves: [note: moved], linking: linking, before: context, after: after)
@@ -418,7 +422,7 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let workplace = Reach.workplace(of: container)
-            let context = try await services.retrieval.linkContext(for: container)
+            let context = try await services.retrieval.linkContext(for: container, from: workplace)
             let linking = try await services.retrieval.notesLinking(throughFolderNamed: folder.name, from: workplace)
             let renamed = try await services.notes.renameFolder(folder, in: container, to: name)
             guard renamed != folder else { return nil }
@@ -465,7 +469,7 @@ extension AppModel {
             if edited.name != current.name {
                 let container = Container.space(edited.id)
                 let workplace = Reach.workplace(of: container)
-                let context = try await services.retrieval.linkContext(for: container)
+                let context = try await services.retrieval.linkContext(for: container, from: workplace)
                 let linking = try await services.retrieval.notesLinking(
                     throughFolderNamed: current.name, from: workplace)
                 saved = try await services.catalog.renameSpace(edited.id, to: edited.name)

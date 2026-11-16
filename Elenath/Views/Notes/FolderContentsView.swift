@@ -171,7 +171,9 @@ struct FolderContentsView: View {
         if let listing = try? await services.catalog.listing(of: folder, in: container) {
             self.listing = listing
         }
-        if let hits = try? await services.retrieval.notes(in: folder, of: container) {
+        if let hits = try? await services.retrieval.notes(
+            in: folder, of: container, from: Reach.workplace(of: container))
+        {
             var byPath: [ItemPath: NoteHit] = [:]
             for hit in hits {
                 byPath[hit.note.path] = hit

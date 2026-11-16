@@ -114,7 +114,9 @@ final class EditorSession {
         do {
             let note = try await services.notes.read(ref)
             show(note)
-            needsFreshIdentity = (try? await services.retrieval.hasDuplicatedIdentity(ref)) ?? false
+            needsFreshIdentity =
+                (try? await services.retrieval.hasDuplicatedIdentity(ref, from: Reach.workplace(of: ref.container)))
+                ?? false
         } catch NoteStoreError.notFound {
             isLoading = false
             isDetached = true

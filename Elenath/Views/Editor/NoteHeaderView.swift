@@ -196,7 +196,8 @@ struct BacklinksView: View {
         }
         .task(id: Key(note: note, revision: revision)) {
             guard let services = model.services else { return }
-            backlinks = (try? await services.retrieval.backlinks(to: note)) ?? []
+            backlinks =
+                (try? await services.retrieval.backlinks(to: note, from: Reach.workplace(of: note.container))) ?? []
         }
     }
 

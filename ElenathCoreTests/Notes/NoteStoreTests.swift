@@ -328,7 +328,7 @@ struct NoteStoreTests {
         try fixture.write("unrelated", to: "Inbox/Attachments/unrelated.png")
 
         await fixture.indexer().refreshAll()
-        let shared = try await fixture.retrieval().attachmentNamesShared(by: fixture.inbox("Capture.md"))
+        let shared = try await fixture.retrieval().attachmentNamesShared(by: fixture.inbox("Capture.md"), from: .inbox)
         #expect(shared == ["shared.pdf"])
         let moved = try await fixture.notes.move(
             fixture.inbox("Capture.md"), to: ItemPath("Physics")!, in: .space(uni.id), sharedAttachments: shared)
@@ -354,7 +354,8 @@ struct NoteStoreTests {
         // The index knows that Sheet 1 uses it too.
         await fixture.indexer().refreshAll()
         let lecture = fixture.ref(uni, "Physics/Lecture.md")
-        let shared = try await fixture.retrieval().attachmentNamesShared(by: lecture)
+        let shared = try await fixture.retrieval().attachmentNamesShared(
+            by: lecture, from: Reach.workplace(of: lecture.container))
         #expect(shared == ["diagram.png"])
         _ = try await fixture.notes.move(
             lecture, to: ItemPath("Archive")!, in: .space(uni.id), sharedAttachments: shared)

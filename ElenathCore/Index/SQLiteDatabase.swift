@@ -9,6 +9,12 @@ struct SQLiteError: Error, CustomStringConvertible, Sendable {
     var description: String {
         "SQLite error \(code): \(message)"
     }
+
+    /// The file is damaged, or isn't a database at all.
+    var isDamagedFile: Bool {
+        let primary = code & 0xFF
+        return primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB
+    }
 }
 
 /// A value bound to a statement.
@@ -55,9 +61,11 @@ struct SQLiteRow {
         sqlite3_column_type(statement, column) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, column)
     }
 
+    /// The column's text, all of it: a NUL inside the text doesn't end it.
     func text(_ column: Int32) -> String? {
         guard let pointer = sqlite3_column_text(statement, column) else { return nil }
-        return String(cString: pointer)
+        let count = Int(sqlite3_column_bytes(statement, column))
+        return String(decoding: UnsafeBufferPointer(start: pointer, count: count), as: UTF8.self)
     }
 
     /// The column's text, or "" when it is NULL.
@@ -198,9 +206,15 @@ final class SQLiteDatabase {
             case .real(let number):
                 status = sqlite3_bind_double(statement, index, number)
             case .text(let text):
-                // SQLITE_TRANSIENT: SQLite copies the text before the call returns.
-                status = sqlite3_bind_text(
-                    statement, index, text, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+                // Bound by its length in bytes, so a NUL inside the text doesn't cut it short. The terminating
+                // NUL of `utf8CString` isn't counted. SQLITE_TRANSIENT: SQLite copies the text before the call
+                // returns.
+                let bytes = text.utf8CString
+                status = bytes.withUnsafeBufferPointer { buffer in
+                    sqlite3_bind_text(
+                        statement, index, buffer.baseAddress, Int32(clamping: buffer.count - 1),
+                        unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+                }
             }
             guard status == SQLITE_OK else { throw lastError(status) }
         }

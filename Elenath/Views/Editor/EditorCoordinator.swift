@@ -312,9 +312,11 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         let container = session.ref.container
         linkContextTask?.cancel()
         linkContextTask = Task {
-            guard let context = try? await services.retrieval.linkContext(for: container), !Task.isCancelled else {
-                return
-            }
+            guard
+                let context = try? await services.retrieval.linkContext(
+                    for: container, from: Reach.workplace(of: container)),
+                !Task.isCancelled
+            else { return }
             linkContext = context
             if let storage = textView?.textStorage {
                 styler.recolorLinks(storage)

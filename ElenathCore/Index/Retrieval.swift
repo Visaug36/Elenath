@@ -141,9 +141,12 @@ public struct LinkContext: Sendable {
 /// hand it a wider one. Queries about one note use the note's own container as the workplace.
 ///
 /// So a sealed space's notes, tags, tasks, file names and folder names come out only when the question
-/// is asked from inside that space, and nothing else comes out there. `SealingLeakTests` plants marker
+/// is asked from inside that space, and nothing else comes out there. Every query takes the workplace it
+/// is asked from, also those about one note: asked about a note the workplace may not read, a query
+/// answers with nothing, so a caller that passes the wrong note can't reach across a seal. `SealingLeakTests` plants marker
 /// words and checks every query below; `scripts/check-rules.sh` fails when a query is missing there.
 public actor Retrieval {
+    private static let log = CoreLog(category: "Retrieval")
     private let indexDirectory: URL
     private let spaces: @Sendable () async -> [Space]
     private var indexes: [Container: SpaceIndex] = [:]
@@ -216,7 +219,7 @@ public actor Retrieval {
                     ))
             }
             if found.count < query.limit {
-                for (row, body) in try index.searchSubstrings(terms.words, filter: filter, limit: query.limit)
+                for (row, body) in try index.searchSubstrings(terms.substringWords, filter: filter, limit: query.limit)
                 where !found.contains(row.path) {
                     loose.append(
                         SearchHit(
@@ -268,9 +271,13 @@ public actor Retrieval {
     // MARK: - Lists
 
     /// The notes directly inside a folder of a space or of the Inbox, by title.
-    public func notes(in folder: ItemPath, of container: Container) async throws -> [NoteHit] {
+    public func notes(
+        in folder: ItemPath, of container: Container, from workplace: Workplace
+    ) async throws
+        -> [NoteHit]
+    {
         var hits: [NoteHit] = []
-        for index in try await readable(from: Reach.workplace(of: container)) where index.container == container {
+        for index in try await readable(from: workplace) where index.container == container {
             hits += try index.notes(inFolder: folder).map { Retrieval.hit($0, in: container) }
         }
         return hits
@@ -340,10 +347,13 @@ public actor Retrieval {
     // MARK: - Links
 
     /// What links written in a container can resolve to. Use it to resolve many links at once, and with
-    /// `LinkRewriter` when a note is renamed or moved.
-    public func linkContext(for container: Container) async throws -> LinkContext {
+    /// `LinkRewriter` when a note is renamed or moved. Empty for a container the workplace may not read.
+    public func linkContext(for container: Container, from workplace: Workplace) async throws -> LinkContext {
         let allSpaces = await spaces()
-        let readable = try self.readable(from: Reach.workplace(of: container), spaces: allSpaces)
+        guard Reach(workplace: workplace, spaces: allSpaces).allows(container) else {
+            return LinkContext(catalog: TitleCatalog(), spaceNames: [:])
+        }
+        let readable = try self.readable(from: workplace, spaces: allSpaces)
         var versions: [Container: Int64] = [:]
         for index in readable {
             versions[index.container] = try index.dataVersion()
@@ -368,15 +378,20 @@ public actor Retrieval {
     }
 
     /// The note a link written in `source` points at.
-    public func resolve(_ link: WikiLink, from source: NoteRef) async throws -> LinkResolution {
-        try await linkContext(for: source.container).resolver.resolve(link, from: source)
+    public func resolve(
+        _ link: WikiLink, in source: NoteRef, from workplace: Workplace
+    ) async throws
+        -> LinkResolution
+    {
+        try await linkContext(for: source.container, from: workplace).resolver.resolve(link, from: source)
     }
 
     /// The links that point at a note, from the notes its own container may read.
-    public func backlinks(to note: NoteRef) async throws -> [Backlink] {
-        let resolver = try await linkContext(for: note.container).resolver
+    public func backlinks(to note: NoteRef, from workplace: Workplace) async throws -> [Backlink] {
+        guard await allows(note.container, from: workplace) else { return [] }
+        let resolver = try await linkContext(for: note.container, from: workplace).resolver
         var result: [Backlink] = []
-        for index in try await readable(from: Reach.workplace(of: note.container)) {
+        for index in try await readable(from: workplace) {
             for row in try index.links(toTitleKey: NameSanitizer.key(note.title)) {
                 let source = NoteRef(container: index.container, path: row.source.path)
                 guard source != note else { continue }
@@ -411,32 +426,33 @@ public actor Retrieval {
     }
 
     /// The files a note refers to that other notes in its space (or the Inbox) refer to as well, by
-    /// name key: what moving the note must copy rather than move. Asked from the note's own container.
-    public func attachmentNamesShared(by note: NoteRef) async throws -> Set<String> {
-        for index in try await readable(from: Reach.workplace(of: note.container))
-        where index.container == note.container {
+    /// name key: what moving the note must copy rather than move.
+    public func attachmentNamesShared(by note: NoteRef, from workplace: Workplace) async throws -> Set<String> {
+        for index in try await readable(from: workplace) where index.container == note.container {
             return try index.linkKeysShared(with: note.path)
         }
         return []
     }
 
     /// The notes that link to a note, each once: the ones `LinkRewriter` has to look at when it moves.
-    public func linkingNotes(to note: NoteRef) async throws -> [NoteRef] {
+    public func linkingNotes(to note: NoteRef, from workplace: Workplace) async throws -> [NoteRef] {
         var seen = Set<NoteRef>()
-        return try await backlinks(to: note).map(\.source.note).filter { seen.insert($0).inserted }
+        return try await backlinks(to: note, from: workplace).map(\.source.note).filter { seen.insert($0).inserted }
     }
 
     /// The notes whose links pointed at notes that have since been renamed or moved outside Elenath (in
     /// Finder, or by another app), each once: what `LinkRewriter` repairs once the index has followed the
     /// moves. The links are judged as they were, with every moved note back in its old place, from each
     /// moved note's own container. A moved note that links to itself or to another moved note is named
-    /// by its old place, as `LinkRewriter` expects.
-    public func linkingNotes(toMoved moves: [NoteMove]) async throws -> [NoteRef] {
+    /// by its old place, as `LinkRewriter` expects. Moves in a container the workplace may not read are
+    /// left out.
+    public func linkingNotes(toMoved moves: [NoteMove], from workplace: Workplace) async throws -> [NoteRef] {
         var seen = Set<NoteRef>()
         var result: [NoteRef] = []
         for (container, group) in Dictionary(grouping: moves, by: \.from.container)
         where group.allSatisfy({ $0.to.container == container }) {
-            var context = try await linkContext(for: container)
+            guard await allows(container, from: workplace) else { continue }
+            var context = try await linkContext(for: container, from: workplace)
             for move in group {
                 context = context.moving(move.to, to: move.from)
             }
@@ -444,7 +460,7 @@ public actor Retrieval {
             let old = Set(group.map(\.from))
             let oldPlace = Dictionary(group.map { ($0.to, $0.from) }, uniquingKeysWith: { first, _ in first })
             let keys = Set(group.map { NameSanitizer.key($0.from.title) })
-            for index in try await readable(from: Reach.workplace(of: container)) {
+            for index in try await readable(from: workplace) {
                 for key in keys.sorted() {
                     for row in try index.links(toTitleKey: key) {
                         let current = NoteRef(container: index.container, path: row.source.path)
@@ -480,10 +496,9 @@ public actor Retrieval {
         return nil
     }
 
-    /// What the index holds about one note, asked from the note's own container.
-    public func note(_ note: NoteRef) async throws -> NoteHit? {
-        for index in try await readable(from: Reach.workplace(of: note.container))
-        where index.container == note.container {
+    /// What the index holds about one note.
+    public func note(_ note: NoteRef, from workplace: Workplace) async throws -> NoteHit? {
+        for index in try await readable(from: workplace) where index.container == note.container {
             return try index.note(at: note.path).map { Retrieval.hit($0, in: note.container) }
         }
         return nil
@@ -491,9 +506,8 @@ public actor Retrieval {
 
     /// Whether the note is a duplicated file: an older note beside it in the same space carries the same
     /// `id`. The next save gives it an id of its own.
-    public func hasDuplicatedIdentity(_ note: NoteRef) async throws -> Bool {
-        for index in try await readable(from: Reach.workplace(of: note.container))
-        where index.container == note.container {
+    public func hasDuplicatedIdentity(_ note: NoteRef, from workplace: Workplace) async throws -> Bool {
+        for index in try await readable(from: workplace) where index.container == note.container {
             return try index.isLaterDuplicate(note.path)
         }
         return false
@@ -532,24 +546,35 @@ public actor Retrieval {
         try readable(from: workplace, spaces: await spaces())
     }
 
+    /// Whether a workplace may read a container, with the spaces as they are now.
+    private func allows(_ container: Container, from workplace: Workplace) async -> Bool {
+        Reach(workplace: workplace, spaces: await spaces()).allows(container)
+    }
+
+    /// A database that can't be opened is left out, so one damaged space doesn't empty every search; the
+    /// indexer replaces it at its next pass.
     private func readable(from workplace: Workplace, spaces: [Space]) throws -> [SpaceIndex] {
         let reach = Reach(workplace: workplace, spaces: spaces)
+        let containers = spaces.map { Container.space($0.id) } + [.inbox]
         var result: [SpaceIndex] = []
-        for space in spaces where reach.allows(.space(space.id)) {
-            result.append(try index(for: .space(space.id)))
-        }
-        if reach.allows(.inbox) {
-            result.append(try index(for: .inbox))
+        for container in containers where reach.allows(container) {
+            do {
+                result.append(try index(for: container))
+            } catch {
+                Retrieval.log.error("Could not open an index", private: String(describing: error))
+            }
         }
         return result
     }
 
     private func index(for container: Container) throws -> SpaceIndex {
-        if let index = indexes[container] {
+        let url = indexDirectory.appending(component: SpaceIndex.fileName(for: container), directoryHint: .notDirectory)
+        // The indexer replaces a damaged database with a new file; a handle on the old one is let go.
+        if let index = indexes[container], index.isStillOpen(at: url) {
             return index
         }
+        indexes[container] = nil
         try FileManager.default.createDirectory(at: indexDirectory, withIntermediateDirectories: true, attributes: nil)
-        let url = indexDirectory.appending(component: SpaceIndex.fileName(for: container), directoryHint: .notDirectory)
         let index = try SpaceIndex(url: url, container: container)
         indexes[container] = index
         return index
@@ -641,19 +666,43 @@ public actor Retrieval {
 
 /// The words of a search, and the full-text query made of them.
 struct SearchTerms {
-    /// What was typed, split at spaces, without quotes and without anything that has no letter or digit.
+    /// Words after this many are left out. A longer search is pasted text, and every word makes the
+    /// full-text query bigger: a thousand would be more than SQLite takes.
+    static let maximumWords = 32
+
+    /// What was typed, split at spaces, without quotes and control characters, and without anything that
+    /// has no letter or digit.
     var words: [String]
 
     init(_ text: String) {
-        words = text.split(whereSeparator: \.isWhitespace).compactMap { part in
-            let word = part.replacingOccurrences(of: "\"", with: "")
-            return word.contains(where: { $0.isLetter || $0.isNumber }) ? word : nil
+        var words: [String] = []
+        for part in text.split(whereSeparator: \.isWhitespace) {
+            var kept = String.UnicodeScalarView()
+            kept.append(
+                contentsOf: part.unicodeScalars.filter { $0 != "\"" && $0.properties.generalCategory != .control })
+            let word = String(kept)
+            guard word.contains(where: { $0.isLetter || $0.isNumber }) else { continue }
+            words.append(word)
+            if words.count == SearchTerms.maximumWords {
+                break
+            }
         }
+        self.words = words
     }
 
-    /// Every word must match, the last one as the start of a word. Nil when there are no words.
+    /// Every word must match, the last one as the start of a word, unless it is a single character: as
+    /// the start of a word, one letter matches nearly every note, and the search would be slow for nothing.
+    /// Nil when there are no words.
     var fullTextQuery: String? {
-        guard !words.isEmpty else { return nil }
-        return words.map { "\"\($0)\"" }.joined(separator: " ") + "*"
+        guard let last = words.last else { return nil }
+        let prefix = last.unicodeScalars.count > 1 ? "*" : ""
+        return words.map { "\"\($0)\"" }.joined(separator: " ") + prefix
+    }
+
+    /// The words to look for inside other words and in text without spaces: those of three characters and
+    /// more, and shorter ones in scripts written without spaces. One or two letters of a language with
+    /// spaces are inside too many words to mean anything, and finding them means reading every note.
+    var substringWords: [String] {
+        words.filter { $0.unicodeScalars.count >= 3 || $0.unicodeScalars.contains { $0.value >= 0x2E80 } }
     }
 }

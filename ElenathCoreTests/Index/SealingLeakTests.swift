@@ -135,8 +135,13 @@ struct SealingLeakTests {
             return found.joined(separator: "\n").lowercased()
         }
 
-        /// Everything the queries about one note give for the notes of one container.
-        func everythingAbout(notesIn container: Container, marker: String) async throws -> String {
+        /// Everything the queries about one note give for the notes of one container, asked from a
+        /// workplace.
+        func everythingAbout(
+            notesIn container: Container, marker: String, from workplace: Workplace
+        ) async throws
+            -> String
+        {
             var found: [String] = []
             let notes = [
                 roster(marker, in: container),
@@ -144,25 +149,40 @@ struct SealingLeakTests {
                 NoteRef(container: container, path: ItemPath("Shared title.md")!),
             ]
             for note in notes {
-                for backlink in try await retrieval.backlinks(to: note) {
+                for backlink in try await retrieval.backlinks(to: note, from: workplace) {
                     found += [backlink.source.title, backlink.source.preview, backlink.context]
                     found.append(backlink.source.note.path.description)
                 }
-                found += try await retrieval.linkingNotes(to: note).map(\.path.description)
+                found += try await retrieval.linkingNotes(to: note, from: workplace).map(\.path.description)
                 // As if the note had been renamed in Finder: the notes that linked to it.
                 let renamed = NoteRef(container: container, path: ItemPath("Renamed \(marker).md")!)
-                found += try await retrieval.linkingNotes(toMoved: [NoteMove(from: note, to: renamed)]).map(
-                    \.path.description)
-                found += try await retrieval.attachmentNamesShared(by: note)
-                if let hit = try await retrieval.note(note) {
+                found += try await retrieval.linkingNotes(
+                    toMoved: [NoteMove(from: note, to: renamed)], from: workplace
+                ).map(\.path.description)
+                found += try await retrieval.attachmentNamesShared(by: note, from: workplace)
+                if let hit = try await retrieval.note(note, from: workplace) {
                     found += [hit.title, hit.preview]
                 }
-                _ = try await retrieval.hasDuplicatedIdentity(note)
+                if try await retrieval.hasDuplicatedIdentity(note, from: workplace) {
+                    found.append("duplicated \(note.path)")
+                }
+                for target in ["\(marker) plan", "\(marker) roster", "Shared title"] {
+                    if case .resolved(let resolved) = try await retrieval.resolve(
+                        WikiLink(target: target), in: note, from: workplace)
+                    {
+                        found.append(resolved.path.description)
+                    }
+                }
             }
             for folder in [ItemPath.root, ItemPath("\(marker) drills")!] {
-                for hit in try await retrieval.notes(in: folder, of: container) {
+                for hit in try await retrieval.notes(in: folder, of: container, from: workplace) {
                     found += [hit.title, hit.preview, hit.note.path.description]
                 }
+            }
+            let context = try await retrieval.linkContext(for: container, from: workplace)
+            found += context.spaceNames.values
+            for note in notes where context.catalog.contains(note) {
+                found.append(note.path.description)
             }
             return found.joined(separator: "\n").lowercased()
         }
@@ -240,21 +260,42 @@ struct SealingLeakTests {
     func queriesAboutOneNote() async throws {
         let library = try await Library()
         defer { library.fixture.remove() }
-        let sealed = try await library.everythingAbout(notesIn: .space(library.redCross.id), marker: Self.sealedMarker)
+        let sealed = try await library.everythingAbout(
+            notesIn: .space(library.redCross.id), marker: Self.sealedMarker, from: .space(library.redCross.id))
         #expect(sealed.contains("zebrafish roster"))
         #expect(!sealed.contains(Self.openMarker))
         #expect(!sealed.contains(Self.inboxMarker))
         #expect(!sealed.contains("curious"))
 
-        let open = try await library.everythingAbout(notesIn: .space(library.uni.id), marker: Self.openMarker)
+        let open = try await library.everythingAbout(
+            notesIn: .space(library.uni.id), marker: Self.openMarker, from: .space(library.uni.id))
         #expect(open.contains("quokka roster"))
         #expect(!open.contains(Self.sealedMarker))
         #expect(!open.contains(Self.inboxMarker))
 
-        let inbox = try await library.everythingAbout(notesIn: .inbox, marker: Self.inboxMarker)
+        let inbox = try await library.everythingAbout(notesIn: .inbox, marker: Self.inboxMarker, from: .inbox)
         #expect(inbox.contains("axolotl roster"))
         #expect(!inbox.contains(Self.sealedMarker))
         #expect(!inbox.contains(Self.openMarker))
+    }
+
+    @Test("Asked about a note from a workplace that may not read it, every query says nothing")
+    func queriesAboutOneNoteFromOutside() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let sealed = Container.space(library.redCross.id)
+        let uni = Container.space(library.uni.id)
+        let cases: [(container: Container, marker: String, outside: [Workplace])] = [
+            (sealed, Self.sealedMarker, [.space(library.uni.id), .space(library.ideas.id), .everywhere, .inbox]),
+            (.inbox, Self.inboxMarker, [.space(library.uni.id), .space(library.redCross.id), .everywhere]),
+            (uni, Self.openMarker, [.space(library.redCross.id), .inbox]),
+        ]
+        for (container, marker, outside) in cases {
+            for workplace in outside + [.space(SpaceID())] {
+                let text = try await library.everythingAbout(notesIn: container, marker: marker, from: workplace)
+                #expect(text.isEmpty, "\(container) answered \(workplace): \(text)")
+            }
+        }
     }
 
     @Test("Links never resolve across a seal, in either direction, however they are written")
@@ -266,31 +307,43 @@ struct SealingLeakTests {
         let fromSealed = library.roster(Self.sealedMarker, in: .space(library.redCross.id))
         let fromInbox = library.roster(Self.inboxMarker, in: .inbox)
         let sealedRoster = library.roster(Self.sealedMarker, in: .space(library.redCross.id))
+        let sealedPlace = Workplace.space(library.redCross.id)
 
         for target in [
             "zebrafish roster", "Red Cross/zebrafish roster", "Red Cross/zebrafish drills/zebrafish roster",
             "zebrafish drills/zebrafish roster", "zebrafish plan", "axolotl roster", "Inbox/axolotl roster",
         ] {
-            #expect(try await retrieval.resolve(WikiLink(target: target), from: fromIdeas) == .unresolved, "\(target)")
+            #expect(
+                try await retrieval.resolve(WikiLink(target: target), in: fromIdeas, from: .space(library.ideas.id))
+                    == .unresolved, "\(target)")
         }
         // "Shared title" exists on both sides. From outside, it is never the sealed one or the Inbox's.
         #expect(
-            try await retrieval.resolve(WikiLink(target: "Shared title"), from: fromIdeas)
+            try await retrieval.resolve(WikiLink(target: "Shared title"), in: fromIdeas, from: .space(library.ideas.id))
                 == .resolved(NoteRef(container: .space(library.uni.id), path: ItemPath("Shared title.md")!)))
 
         // From inside the seal: only what is inside.
         #expect(
-            try await retrieval.resolve(WikiLink(target: "zebrafish roster"), from: fromSealed)
+            try await retrieval.resolve(WikiLink(target: "zebrafish roster"), in: fromSealed, from: sealedPlace)
                 == .resolved(sealedRoster))
         #expect(
-            try await retrieval.resolve(WikiLink(target: "Shared title"), from: fromSealed)
+            try await retrieval.resolve(WikiLink(target: "Shared title"), in: fromSealed, from: sealedPlace)
                 == .resolved(NoteRef(container: .space(library.redCross.id), path: ItemPath("Shared title.md")!)))
         for target in ["quokka roster", "Uni/quokka roster", "Curious", "Ideas/Curious", "axolotl roster"] {
-            #expect(try await retrieval.resolve(WikiLink(target: target), from: fromSealed) == .unresolved, "\(target)")
+            #expect(
+                try await retrieval.resolve(WikiLink(target: target), in: fromSealed, from: sealedPlace) == .unresolved,
+                "\(target)")
         }
         // From the Inbox: only the Inbox.
-        #expect(try await retrieval.resolve(WikiLink(target: "quokka roster"), from: fromInbox) == .unresolved)
-        #expect(try await retrieval.resolve(WikiLink(target: "zebrafish roster"), from: fromInbox) == .unresolved)
+        #expect(
+            try await retrieval.resolve(WikiLink(target: "quokka roster"), in: fromInbox, from: .inbox) == .unresolved)
+        #expect(
+            try await retrieval.resolve(WikiLink(target: "zebrafish roster"), in: fromInbox, from: .inbox)
+                == .unresolved)
+        // A link written inside the seal, resolved for a workplace outside it, reaches nothing.
+        #expect(
+            try await retrieval.resolve(WikiLink(target: "zebrafish roster"), in: fromSealed, from: .everywhere)
+                == .unresolved)
 
         // What a container's links can resolve to holds no note from the other side.
         for (container, forbidden) in [
@@ -298,14 +351,14 @@ struct SealingLeakTests {
             (.space(library.redCross.id), [.space(library.uni.id), .space(library.ideas.id), .inbox]),
             (.inbox, [.space(library.uni.id), .space(library.ideas.id), .space(library.redCross.id)]),
         ] {
-            let context = try await retrieval.linkContext(for: container)
+            let context = try await retrieval.linkContext(for: container, from: Reach.workplace(of: container))
             for other in forbidden {
                 for marker in [Self.sealedMarker, Self.openMarker, Self.inboxMarker] {
                     #expect(!context.catalog.contains(library.roster(marker, in: other)))
                 }
             }
         }
-        let sealedContext = try await retrieval.linkContext(for: .space(library.redCross.id))
+        let sealedContext = try await retrieval.linkContext(for: .space(library.redCross.id), from: sealedPlace)
         #expect(Array(sealedContext.spaceNames.values) == ["Red Cross"])
     }
 
@@ -345,7 +398,8 @@ struct SealingLeakTests {
         #expect(
             try await library.retrieval.resolve(
                 WikiLink(target: "zebrafish roster"),
-                from: NoteRef(container: .space(library.ideas.id), path: ItemPath("Curious.md")!)) != .unresolved)
+                in: NoteRef(container: .space(library.ideas.id), path: ItemPath("Curious.md")!),
+                from: .space(library.ideas.id)) != .unresolved)
 
         redCross.isSealed = true
         try await library.fixture.catalog.update(redCross)
@@ -354,7 +408,8 @@ struct SealingLeakTests {
         #expect(
             try await library.retrieval.resolve(
                 WikiLink(target: "zebrafish roster"),
-                from: NoteRef(container: .space(library.ideas.id), path: ItemPath("Curious.md")!)) == .unresolved)
+                in: NoteRef(container: .space(library.ideas.id), path: ItemPath("Curious.md")!),
+                from: .space(library.ideas.id)) == .unresolved)
 
         // A newly sealed space closes both ways.
         var uni = library.uni

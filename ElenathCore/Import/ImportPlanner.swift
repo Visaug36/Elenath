@@ -8,6 +8,8 @@ public enum SkipReason: Hashable, Sendable {
     case symbolicLink
     /// It could not be read.
     case unreadable
+    /// A named pipe, socket or device: not a file with something in it.
+    case special
 }
 
 /// What will happen to one dropped item (docs/ARCHITECTURE.md, "Import").
@@ -58,6 +60,9 @@ public enum ImportPlanner {
         guard let info = fileSystem.info(at: url) else { return .skipped(source: url, reason: .unreadable) }
         if info.isSymbolicLink {
             return .skipped(source: url, reason: .symbolicLink)
+        }
+        if info.isSpecial {
+            return .skipped(source: url, reason: .special)
         }
         let fileExtension = url.pathExtension.lowercased()
         let title = fileExtension.isEmpty ? name : String(name.dropLast(fileExtension.count + 1))

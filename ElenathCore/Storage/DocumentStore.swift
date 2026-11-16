@@ -137,6 +137,7 @@ public actor DocumentStore<Document: VersionedDocument> {
     public func load() throws -> DocumentLoad<Document> {
         isReadOnly = false
         hasCheckedEventsFile = false
+        try requireContainedFolders()
         guard fileSystem.isDirectory(at: owner) else {
             log.error("The folder is missing")
             throw DocumentStoreError.missing
@@ -197,6 +198,7 @@ public actor DocumentStore<Document: VersionedDocument> {
     /// Writes a brand-new document. Refuses (throws) if `owner` is missing or the file already exists, so
     /// an existing document is never replaced by an empty one.
     public func create(_ document: Document) throws {
+        try requireContainedFolders()
         guard fileSystem.isDirectory(at: owner) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSURLErrorKey: owner])
         }
@@ -231,6 +233,7 @@ public actor DocumentStore<Document: VersionedDocument> {
     /// `backups/` at once, whatever the interval: for a change that must survive the loss of the file
     /// even on a Mac without the safety copy (sealing a space).
     public func save(_ document: Document, backingUpNewVersion: Bool) throws {
+        try requireContainedFolders()
         guard !isReadOnly else { throw DocumentStoreError.readOnly }
         guard fileSystem.isDirectory(at: owner) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSURLErrorKey: owner])
@@ -343,6 +346,22 @@ public actor DocumentStore<Document: VersionedDocument> {
             return
         }
         pruneBackups()
+    }
+
+    /// The settings folder and its backups must be real folders inside `owner`. A `.space` or `.elenath`
+    /// that is a link (to anywhere) is refused: reading through it could load someone else's settings,
+    /// and writing or pruning backups through it would touch files outside the library.
+    private func requireContainedFolders() throws {
+        for folder in [metadataFolder, backupsFolder] {
+            if let info = fileSystem.info(at: folder), info.isSymbolicLink || !info.isDirectory {
+                throw DocumentStoreError.unreadable("\(folder.lastPathComponent) isn't a folder")
+            }
+        }
+        if fileSystem.info(at: metadataFolder) != nil,
+            !PathContainment.isStrictlyInside(metadataFolder, folder: owner)
+        {
+            throw DocumentStoreError.unreadable("\(metadataFolder.lastPathComponent) leads outside its folder")
+        }
     }
 
     /// Keeps the newest `maxBackups` backups, by the timestamp (and counter) in their names.

@@ -109,6 +109,26 @@ public enum FileCopier {
         return copied
     }
 
+    /// How deep a copied folder may go. Deeper than this is refused rather than copied in part.
+    public static let maximumFolderDepth = 64
+
+    /// Copies a folder entry by entry: folders and regular files only. Links and special files inside it
+    /// are left out, so a copied folder never points outside the library.
+    static func copyTree(_ source: URL, to destination: URL, fileSystem: any FileSystem, depth: Int) throws {
+        guard depth < maximumFolderDepth else { throw CocoaError(.fileReadTooLarge, userInfo: [NSURLErrorKey: source]) }
+        try fileSystem.createDirectory(at: destination)
+        for item in try fileSystem.contentsOfDirectory(at: source) {
+            guard let info = fileSystem.info(at: item), !info.isSymbolicLink, !info.isSpecial else { continue }
+            let target = destination.appending(
+                component: item.lastPathComponent, directoryHint: info.isDirectory ? .isDirectory : .notDirectory)
+            if info.isDirectory {
+                try copyTree(item, to: target, fileSystem: fileSystem, depth: depth + 1)
+            } else {
+                try fileSystem.copyItem(at: item, to: target)
+            }
+        }
+    }
+
     /// A name for `name` that nothing in `folder` has, compared as the file system compares names.
     public static func availableName(for name: String, in folder: URL, fileSystem: any FileSystem) -> String {
         let taken = Set(
@@ -155,12 +175,21 @@ public enum FileCopier {
             // No name to give the copy, or a folder being copied into itself, which would never end.
             throw FileCopyError.unusableSource(name)
         }
+        // A link would bring a pointer to somewhere else into the library, and a named pipe or device
+        // has nothing to copy.
+        guard let sourceInfo = fileSystem.info(at: source), !sourceInfo.isSymbolicLink, !sourceInfo.isSpecial else {
+            throw FileCopyError.unusableSource(name)
+        }
         let temporary = folder.appending(
             component: temporaryNamePrefix + UUID().uuidString, directoryHint: .notDirectory)
         guard PathContainment.isStrictlyInside(temporary, folder: root) else { throw FileCopyError.outsideLibrary }
 
         let job = CopyJob()
-        job.start { try fileSystem.copyItem(at: source, to: temporary) }
+        if sourceInfo.isDirectory {
+            job.start { try copyTree(source, to: temporary, fileSystem: fileSystem, depth: 0) }
+        } else {
+            job.start { try fileSystem.copyItem(at: source, to: temporary) }
+        }
         var reportedBytes = base.completedBytes
         var outcome: Result<Void, any Error>?
         while outcome == nil {

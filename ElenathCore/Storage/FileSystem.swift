@@ -52,17 +52,21 @@ public struct FileIdentity: Hashable, Sendable {
 public struct FileInfo: Hashable, Sendable {
     public var isDirectory: Bool
     public var isSymbolicLink: Bool
+    /// A named pipe, socket or device: never read, listed, copied or imported. Reading a named pipe
+    /// waits for a writer that may never come.
+    public var isSpecial: Bool
     public var byteCount: Int64
     public var modified: Date?
     public var created: Date?
     public var identity: FileIdentity?
 
     public init(
-        isDirectory: Bool, isSymbolicLink: Bool = false, byteCount: Int64 = 0, modified: Date? = nil,
-        created: Date? = nil, identity: FileIdentity? = nil
+        isDirectory: Bool, isSymbolicLink: Bool = false, isSpecial: Bool = false, byteCount: Int64 = 0,
+        modified: Date? = nil, created: Date? = nil, identity: FileIdentity? = nil
     ) {
         self.isDirectory = isDirectory
         self.isSymbolicLink = isSymbolicLink
+        self.isSpecial = isSpecial
         self.byteCount = byteCount
         self.modified = modified
         self.created = created
@@ -101,8 +105,15 @@ public struct LocalFileSystem: FileSystem {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
     }
 
+    /// Reads a regular file. Anything else (a named pipe, a socket, a device) is refused before it is
+    /// opened, since reading it could wait forever.
     public func readData(at url: URL) throws -> Data {
-        try Data(contentsOf: url)
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let type = attributes[.type] as? FileAttributeType
+        guard type == .typeRegular else {
+            throw CocoaError(.fileReadUnknown, userInfo: [NSURLErrorKey: url])
+        }
+        return try Data(contentsOf: url)
     }
 
     public func writeAtomically(_ data: Data, to url: URL) throws {
@@ -158,6 +169,7 @@ public struct LocalFileSystem: FileSystem {
         return FileInfo(
             isDirectory: type == .typeDirectory,
             isSymbolicLink: type == .typeSymbolicLink,
+            isSpecial: type != .typeRegular && type != .typeDirectory && type != .typeSymbolicLink,
             byteCount: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
             modified: attributes[.modificationDate] as? Date,
             created: attributes[.creationDate] as? Date,

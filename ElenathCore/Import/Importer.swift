@@ -173,9 +173,8 @@ public actor Importer {
                     parts.append(message.text)
                 }
                 for name in message.attachmentNames {
-                    let file = mediaFolder.appending(component: name, directoryHint: .notDirectory)
-                    guard fileSystem.info(at: file) != nil,
-                        let copy = try await noteStore.addAttachments([file], to: note.ref).first
+                    guard let file = Importer.mediaFile(named: name, in: mediaFolder, fileSystem: fileSystem),
+                        let copy = try? await noteStore.addAttachments([file], to: note.ref).first
                     else {
                         parts.append("(\(name) was not in the export)")
                         continue
@@ -194,6 +193,19 @@ public actor Importer {
             }
             report.notes.append(note.ref)
         }
+    }
+
+    /// The file a chat message names, if it is a regular file right in the export's folder. The name comes
+    /// from the chat's text, so anything else is refused: a path ("../", "/"), a hidden name, a folder, a
+    /// link, or a name that leads outside the folder once links are resolved.
+    static func mediaFile(named name: String, in folder: URL, fileSystem: any FileSystem) -> URL? {
+        guard ItemPath(name: name) != nil, !name.hasPrefix("."), !name.contains("/") else { return nil }
+        let file = folder.appending(component: name, directoryHint: .notDirectory)
+        guard file.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL,
+            PathContainment.isStrictlyInside(file, folder: folder),
+            let info = fileSystem.info(at: file), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial
+        else { return nil }
+        return file
     }
 
     /// How a note refers to a file in the `Attachments` folder beside it: an embed for what can be shown

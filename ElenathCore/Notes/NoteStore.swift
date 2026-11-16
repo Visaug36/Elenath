@@ -414,7 +414,7 @@ public actor NoteStore {
         for components in places {
             guard let path = ItemPath(components.joined(separator: "/")),
                 let url = try? await catalog.url(for: path, in: ref.container, isDirectory: false),
-                let info = fileSystem.info(at: url), !info.isDirectory
+                let info = fileSystem.info(at: url), !info.isDirectory, !info.isSpecial
             else { continue }
             return url
         }

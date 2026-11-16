@@ -274,7 +274,7 @@ public actor Indexer {
         try index.transaction {
             for (path, url) in urls {
                 let existing = known[NameSanitizer.key(path.description)]
-                guard let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink,
+                guard let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial,
                     let data = try? fileSystem.readData(at: url)
                 else {
                     if let existing {

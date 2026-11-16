@@ -358,7 +358,7 @@ public actor LibraryCatalog {
         for item in try fileSystem.contentsOfDirectory(at: url) {
             let name = item.lastPathComponent
             guard !name.hasPrefix("."), let path = folder.appending(name), let info = fileSystem.info(at: item),
-                !info.isSymbolicLink
+                !info.isSymbolicLink, !info.isSpecial
             else { continue }
             if info.isDirectory {
                 if !NameSanitizer.isReservedInSpace(name) {

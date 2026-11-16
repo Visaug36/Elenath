@@ -13,6 +13,8 @@ struct ElenathApp: App {
     @State private var model: AppModel
     /// Only for `-demo` screenshot scenes.
     @State private var demoDirector: DemoSceneDirector?
+    /// Only for `-demo -demoSelfCheck`, CI's crash check.
+    @State private var selfCheck: DemoSelfCheck?
 
     init() {
         let options = LaunchOptions.current
@@ -24,10 +26,15 @@ struct ElenathApp: App {
         if options.isDemo, !options.demoScene.isEmpty {
             demoDirector = DemoSceneDirector(scene: options.demoScene, model: model, settings: settings)
         }
+        var selfCheck: DemoSelfCheck?
+        if options.isDemo, options.runsSelfCheck {
+            selfCheck = DemoSelfCheck(model: model, settings: settings)
+        }
         model.start()
         _settings = State(initialValue: settings)
         _model = State(initialValue: model)
         _demoDirector = State(initialValue: demoDirector)
+        _selfCheck = State(initialValue: selfCheck)
         // Before the first window draws, where possible; `connect()` makes sure of it. The global shortcut
         // is registered once the app's run loop is going.
         Task { @MainActor in

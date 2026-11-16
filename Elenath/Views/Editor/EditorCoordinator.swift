@@ -55,11 +55,20 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
     private var linkContextTask: Task<Void, Never>?
     private let textUndoManager = UndoManager()
     private var embeds: [EmbedKey: EmbedState] = [:]
+    /// Decoded pictures by file, up to about 160 MB together: a note with hundreds of pictures holds only
+    /// those drawn lately, and the others are decoded again when they are drawn.
+    private let pictures: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.totalCostLimit = 160 * 1024 * 1024
+        return cache
+    }()
+    private var redecoding: Set<URL> = []
     private var isCompleting = false
 
     private enum EmbedState {
         case loading
-        case loaded(NSImage)
+        /// The picture's file and its size in points. The picture itself is in `pictures`.
+        case loaded(URL, NSSize)
         case missing
     }
 
@@ -207,6 +216,7 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         let body = session.attachTextView(self) { [weak textView] in
             textView?.string
         }
+        styler.isPlain = body.utf8.count > NoteLimits.maximumStyledBytes
         storage.beginEditing()
         storage.setAttributedString(NSAttributedString(string: body, attributes: styler.baseAttributes))
         storage.endEditing()
@@ -296,9 +306,15 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         return targets
     }
 
+    /// Whether typing "[[" opens the list of note titles. The list runs a loop of its own that waits for
+    /// the keyboard, so the demo's self-check, which types without one, turns it off and asks for the
+    /// titles directly.
+    static var showsCompletionList = true
+
     /// Typing "[[" opens the list of note titles.
     private func offerLinkCompletion() {
-        guard !isCompleting, linkContext != nil, let textView, let range = textView.openLinkRange(), range.length == 0
+        guard EditorCoordinator.showsCompletionList, !isCompleting, linkContext != nil, let textView,
+            let range = textView.openLinkRange(), range.length == 0
         else { return }
         isCompleting = true
         textView.complete(nil)
@@ -312,9 +328,11 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         let container = session.ref.container
         linkContextTask?.cancel()
         linkContextTask = Task {
-            guard let context = try? await services.retrieval.linkContext(for: container), !Task.isCancelled else {
-                return
-            }
+            guard
+                let context = try? await services.retrieval.linkContext(
+                    for: container, from: Reach.workplace(of: container)),
+                !Task.isCancelled
+            else { return }
             linkContext = context
             if let storage = textView?.textStorage {
                 styler.recolorLinks(storage)
@@ -358,7 +376,7 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         let source = session.ref
         switch target {
         case .url(let address):
-            openWeb(address)
+            model.openLink(address)
         case .wiki(let link):
             if LinkCompletion.isFileName(link.target) {
                 openFile(EmbedKey(target: link.target, isWikiLink: true, width: nil))
@@ -383,7 +401,7 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
             }
         case .markdown(let destination, _):
             if LinkCompletion.hasScheme(destination) {
-                openWeb(destination)
+                model.openLink(destination)
                 return
             }
             if let context = linkContext,
@@ -396,17 +414,6 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
         }
     }
 
-    /// Web pages and e-mail open in the apps the Mac uses for them. Elenath itself never goes online.
-    private func openWeb(_ address: String) {
-        guard let url = URL(string: address.trimmingCharacters(in: .whitespaces)),
-            let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme)
-        else {
-            NSSound.beep()
-            return
-        }
-        NSWorkspace.shared.open(url)
-    }
-
     private func openFile(_ key: EmbedKey) {
         let note = session.ref
         Task {
@@ -414,7 +421,7 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
                 NSSound.beep()
                 return
             }
-            NSWorkspace.shared.open(url)
+            model.openLibraryFile(url)
         }
     }
 
@@ -475,9 +482,31 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
 
     // MARK: - Embedded pictures
 
+    /// The picture to draw for an embed. One the cache let go of is decoded again, and drawn once it is
+    /// back; one that can't be decoded any more stops taking room.
     private func loadedImage(for key: EmbedKey) -> NSImage? {
-        if case .loaded(let image) = embeds[key] {
-            return image
+        guard case .loaded(let url, _) = embeds[key] else { return nil }
+        if let picture = pictures.object(forKey: url as NSURL) {
+            return picture
+        }
+        if redecoding.insert(url).inserted {
+            Task {
+                let size = await decode(url)
+                redecoding.remove(url)
+                if size == nil {
+                    let gone = embeds.compactMap { key, state -> EmbedKey? in
+                        if case .loaded(let other, _) = state, other == url {
+                            return key
+                        }
+                        return nil
+                    }
+                    for key in gone {
+                        embeds[key] = .missing
+                        restyleLines(showing: key)
+                    }
+                }
+                textView?.needsDisplay = true
+            }
         }
         return nil
     }
@@ -485,31 +514,40 @@ final class EditorCoordinator: NSObject, NSTextViewDelegate, NSTextStorageDelega
     /// The height a picture takes under its line. Starts loading it the first time it is asked for.
     private func embedHeight(for key: EmbedKey) -> CGFloat? {
         switch embeds[key] {
-        case .loaded(let image):
+        case .loaded(_, let size):
             let width = textView?.textContainer?.size.width ?? NoteTextView.maximumColumnWidth
-            return NoteTextView.drawnSize(of: image, key: key, columnWidth: width).height
+            return NoteTextView.drawnSize(of: size, key: key, columnWidth: width).height
         case .loading, .missing:
             return nil
         case nil:
             embeds[key] = .loading
             let note = session.ref
             Task {
-                guard let url = await model.embedURL(for: key, from: note) else {
+                guard let url = await model.embedURL(for: key, from: note), let size = await decode(url) else {
                     embeds[key] = .missing
                     return
                 }
-                let thumbnail = await Task.detached(priority: .utility) {
-                    EmbedThumbnail.make(from: url, maximumPixelSize: 1600)
-                }.value
-                guard let thumbnail else {
-                    embeds[key] = .missing
-                    return
-                }
-                embeds[key] = .loaded(NSImage(cgImage: thumbnail.image, size: thumbnail.pointSize))
+                embeds[key] = .loaded(url, size)
                 restyleLines(showing: key)
             }
             return nil
         }
+    }
+
+    /// Decodes the picture in a file off the main thread, small enough for the column, keeps it in
+    /// `pictures`, and returns its size in points. Nil when it can't be shown.
+    private func decode(_ url: URL) async -> NSSize? {
+        if let picture = pictures.object(forKey: url as NSURL) {
+            return picture.size
+        }
+        let thumbnail = await Task.detached(priority: .utility) {
+            EmbedThumbnail.make(from: url)
+        }.value
+        guard let thumbnail else { return nil }
+        let picture = NSImage(cgImage: thumbnail.image, size: thumbnail.pointSize)
+        pictures.setObject(
+            picture, forKey: url as NSURL, cost: thumbnail.image.bytesPerRow * thumbnail.image.height)
+        return thumbnail.pointSize
     }
 
     /// Styles the lines with an embed again, now that its picture has a size.
@@ -534,7 +572,14 @@ struct EmbedThumbnail: @unchecked Sendable {
     /// The size to draw it at, in points (the pixels are for a Retina screen).
     let pointSize: NSSize
 
-    static func make(from url: URL, maximumPixelSize: Int) -> EmbedThumbnail? {
+    /// The widest column (`NoteTextView.maximumColumnWidth`, 720 pt) at twice its points, for a Retina
+    /// screen.
+    static let maximumPixelSize = 1_440
+    /// A picture with more pixels than this isn't shown: making it small would mean decoding all of it
+    /// first. A photo from a phone has under 50 million.
+    static let maximumSourcePixels = 100_000_000
+
+    static func make(from url: URL, maximumPixelSize: Int = EmbedThumbnail.maximumPixelSize) -> EmbedThumbnail? {
         if url.pathExtension.lowercased() == "pdf" {
             guard let document = PDFDocument(url: url), let page = document.page(at: 0) else { return nil }
             let bounds = page.bounds(for: .mediaBox)
@@ -546,6 +591,14 @@ struct EmbedThumbnail: @unchecked Sendable {
             return EmbedThumbnail(image: image, pointSize: NSSize(width: bounds.width, height: bounds.height))
         }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        if let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.int64Value,
+            let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.int64Value,
+            width.multipliedReportingOverflow(by: height).overflow
+                || width * height > Int64(maximumSourcePixels)
+        {
+            return nil
+        }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,

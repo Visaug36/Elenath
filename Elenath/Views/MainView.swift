@@ -132,7 +132,7 @@ private struct ReadOnlyBanner: View {
     }
 }
 
-/// When the library opens with edits kept in Recovery: offers to put them in the Inbox.
+/// When the library opens with edits kept in Recovery: offers to put them back where they were written.
 private struct RecoveredEditsAlert: ViewModifier {
     @Environment(AppModel.self) private var model
 
@@ -146,15 +146,15 @@ private struct RecoveredEditsAlert: ViewModifier {
                 }
             })
         content.alert("Elenath kept edits it couldn't save", isPresented: isPresented) {
-            Button("Put Them in the Inbox") {
-                model.putRecoveredEditsInInbox()
+            Button("Put Them Back") {
+                model.putRecoveredEditsBack()
             }
             Button("Later", role: .cancel) {
                 model.postponeRecoveredEdits()
             }
         } message: {
             Text(
-                "^[\(count) note](inflect: true) couldn't be saved before Elenath closed. The text is safe: put it in the Inbox to look at it."
+                "^[\(count) note](inflect: true) couldn't be saved before Elenath closed. The text is safe: put it back where it was written, the Inbox or its space, to look at it."
             )
         }
     }

@@ -153,7 +153,8 @@ public actor LibraryCatalog {
             // Shown as far as this version understands it, and never written.
             let file = LibraryLayout.metadataFolder(in: root).appending(
                 component: LibraryLayout.libraryFileName, directoryHint: .notDirectory)
-            guard let document = try? JSONDecoder().decode(LibraryDocument.self, from: fileSystem.readData(at: file))
+            guard let data = try? fileSystem.readData(at: file), DocumentCodec.isSafeToParse(data),
+                let document = try? JSONDecoder().decode(LibraryDocument.self, from: data)
             else {
                 throw DocumentStoreError.unreadable("library.json is from a newer Elenath and can't be shown")
             }
@@ -299,7 +300,7 @@ public actor LibraryCatalog {
     /// it gets a number. Open the library again afterwards to see it.
     public func restoreSpace(from trashed: URL, named name: String) throws {
         _ = try editableLibrary()
-        guard fileSystem.isDirectory(at: trashed) else { throw LibraryCatalogError.unknownSpace }
+        guard fileSystem.isDirectory(at: trashed) else { throw NoteStoreError.cannotPutBack(name) }
         let taken = Set(
             ((try? fileSystem.contentsOfDirectory(at: root)) ?? []).map { NameSanitizer.key($0.lastPathComponent) })
         let folderName = UniqueName.available(name) { taken.contains(NameSanitizer.key($0)) }
@@ -358,7 +359,7 @@ public actor LibraryCatalog {
         for item in try fileSystem.contentsOfDirectory(at: url) {
             let name = item.lastPathComponent
             guard !name.hasPrefix("."), let path = folder.appending(name), let info = fileSystem.info(at: item),
-                !info.isSymbolicLink
+                !info.isSymbolicLink, !info.isSpecial
             else { continue }
             if info.isDirectory {
                 if !NameSanitizer.isReservedInSpace(name) {
@@ -474,7 +475,9 @@ public actor LibraryCatalog {
             // Shown as far as this version understands it. If even that fails, it stays sealed.
             let file = LibraryLayout.spaceMetadataFolder(in: folder).appending(
                 component: LibraryLayout.spaceFileName, directoryHint: .notDirectory)
-            if let document = try? JSONDecoder().decode(SpaceDocument.self, from: fileSystem.readData(at: file)) {
+            if let data = try? fileSystem.readData(at: file), DocumentCodec.isSafeToParse(data),
+                let document = try? JSONDecoder().decode(SpaceDocument.self, from: data)
+            {
                 let space = Self.space(named: folderName, from: document, isReadOnly: true)
                 return LoadedSpace(entry: Entry(space: space, store: store), recovery: nil, sealedByDefault: false)
             }
@@ -568,6 +571,7 @@ public actor LibraryCatalog {
     /// space whose `.space` folder vanished is recognized instead of being taken for a new folder.
     private func readKnownFolders(of libraryID: LibraryID) -> [String: SpaceID] {
         guard let data = try? fileSystem.readData(at: knownFoldersFile(of: libraryID)),
+            DocumentCodec.isSafeToParse(data),
             let stored = try? JSONDecoder().decode([String: SpaceID].self, from: data)
         else { return [:] }
         return stored

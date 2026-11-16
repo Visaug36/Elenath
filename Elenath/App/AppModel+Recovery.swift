@@ -2,66 +2,80 @@ import AppKit
 import ElenathCore
 
 /// Edits Elenath couldn't save before it last closed, kept in its own Recovery folder (docs/FORMAT.md,
-/// "Outside the library"). When the library opens, an alert offers to put them in the Inbox as notes of
-/// their own. Nothing is deleted: a copy that went into the Inbox goes to the Trash.
+/// "Outside the library"). When the library opens, an alert offers to put them back as notes of their
+/// own: each where its note was, the Inbox or its space, so a sealed space's text goes back to that space
+/// only. Nothing is deleted: a copy that was put back goes to the Trash.
 extension AppModel {
     /// The open library's Recovery folder.
-    private var recoveryFolder: URL? {
+    private var recovery: RecoveryFolder? {
         guard let services, let libraryID else { return nil }
-        return services.support.recovery.appending(
-            component: libraryID.rawValue.uuidString, directoryHint: .isDirectory)
+        return RecoveryFolder(
+            folder: services.support.recovery.appending(
+                component: libraryID.rawValue.uuidString, directoryHint: .isDirectory),
+            fileSystem: LocalFileSystem())
     }
 
     /// Looks for kept edits, off the main thread.
     func findRecoveredEdits() {
-        guard let folder = recoveryFolder else { return }
+        guard let recovery else { return }
         let id = libraryID
         Task {
             let found = await Task.detached(priority: .utility) {
-                AppModel.keptNotes(in: folder)
+                recovery.copies()
             }.value
             guard libraryID == id, state == .ready else { return }
             recoveredEdits = found
         }
     }
 
-    private nonisolated static func keptNotes(in folder: URL) -> [URL] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        return names.filter { !$0.hasPrefix(".") && $0.lowercased().hasSuffix(".md") }.sorted().map {
-            folder.appending(component: $0, directoryHint: .notDirectory)
-        }
-    }
-
-    /// "Put Them in the Inbox": each kept copy becomes a note in the Inbox, then goes to the Trash.
-    func putRecoveredEditsInInbox() {
-        let urls = recoveredEdits
+    /// "Put Them Back": each kept copy becomes a note at the top of the Inbox or of its space, then goes
+    /// to the Trash. A copy whose space is gone stays where it is and is shown in Finder: it may come from
+    /// a sealed space, so it never goes to the Inbox.
+    func putRecoveredEditsBack() {
+        let copies = recoveredEdits
         recoveredEdits = []
-        guard let services, canEdit(.inbox), !urls.isEmpty else { return }
+        guard let services, !copies.isEmpty else { return }
         Task {
             var made: [NoteRef] = []
-            var imported: [URL] = []
-            for url in urls {
+            var putBack: [URL] = []
+            var leftOver: [URL] = []
+            for copy in copies {
+                let container: Container
+                if let id = copy.space {
+                    guard space(id) != nil else {
+                        leftOver.append(copy.file)
+                        continue
+                    }
+                    container = .space(id)
+                } else {
+                    container = .inbox
+                }
+                guard canEdit(container) else {
+                    leftOver.append(copy.file)
+                    continue
+                }
                 do {
-                    let title = url.deletingPathExtension().lastPathComponent
                     let note = try await services.notes.importNote(
-                        from: url, title: title, in: .root, container: .inbox)
+                        from: copy.file, title: copy.title, in: .root, container: container)
                     made.append(note)
-                    imported.append(url)
+                    putBack.append(copy.file)
                 } catch {
                     report(error)
                 }
             }
-            let toTrash = imported
+            let toTrash = putBack
             await Task.detached(priority: .utility) {
                 for url in toTrash {
                     try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
                 }
             }.value
             await noteChanged(made)
-            if made.count == 1, let note = made.first {
+            if !leftOver.isEmpty {
+                NSWorkspace.shared.activateFileViewerSelecting(leftOver)
+            } else if made.count == 1, let note = made.first {
                 open(note)
-            } else if !made.isEmpty {
-                go(to: .inbox)
+            } else if let first = made.first {
+                go(to: first.container == .inbox ? .inbox : .folder(first.container, .root))
             }
         }
     }

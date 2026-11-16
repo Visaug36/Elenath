@@ -90,7 +90,7 @@ private struct EditorBannerView: View {
 
     private var symbol: String {
         switch banner {
-        case .readOnly, .notUTF8: "lock.fill"
+        case .readOnly, .notUTF8, .tooLarge: "lock.fill"
         case .conflict, .saveFailed, .missing: "exclamationmark.triangle"
         }
     }
@@ -107,6 +107,8 @@ private struct EditorBannerView: View {
             Text("Elenath couldn't save this note. Your text is safe here, and Elenath keeps trying.")
         case .missing:
             Text("This note was moved or deleted outside Elenath.")
+        case .tooLarge:
+            Text("This note is too large for Elenath to open. Search finds what is at its start.")
         }
     }
 
@@ -129,6 +131,13 @@ private struct EditorBannerView: View {
             }
             Button("Close") {
                 model.goBack()
+            }
+        case .tooLarge:
+            Button("Open in Another App") {
+                model.openFile(session.ref.path, in: session.ref.container)
+            }
+            Button("Show in Finder") {
+                model.revealInFinder(session.ref.path, in: session.ref.container)
             }
         case .readOnly, .notUTF8:
             EmptyView()

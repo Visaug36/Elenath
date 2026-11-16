@@ -22,7 +22,9 @@ jobs:
       # Newest stable Xcode with this major version on the runner (see CLAUDE.md).
       XCODE_MAJOR: "26"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |
@@ -128,13 +130,48 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results
           path: |
             build/TestResults.xcresult
             build/*.log
           if-no-files-found: ignore
+
+  crash-check:
+    # Runs the -demo build through its screens and actions (scripts/selfcheck) and fails on a crash, a hang,
+    # an error the app reports, or a quit that doesn't finish. Demo mode never touches real data.
+    name: Crash check
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      XCODE_MAJOR: "26"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode_${XCODE_MAJOR}*.app | grep -vi beta | sort -V | tail -n 1)
+          sudo xcode-select --switch "$xcode/Contents/Developer"
+
+      - name: Build (Debug, so assertions are on)
+        run: |
+          set -o pipefail
+          xcodebuild build -project Elenath.xcodeproj -scheme Elenath -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath build/DerivedData -quiet
+
+      - name: Run the self-check
+        run: scripts/selfcheck/run.sh build/DerivedData/Build/Products/Debug/Elenath.app
+
+      - name: Upload the self-check's log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: selfcheck
+          path: build/selfcheck
 
   next-macos:
     # Not a gate: it shows early what the next macOS and Xcode will say about the code. It may fail without
@@ -146,7 +183,9 @@ jobs:
     env:
       XCODE_MAJOR: "27"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |

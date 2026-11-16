@@ -7,6 +7,11 @@
 #      files. No network entitlement and no Private Cloud Compute, so macOS itself keeps notes on the Mac.
 #   4. Every public query of Retrieval, the one type that reads the index, is called in SealingLeakTests,
 #      so a new query can't be added without proving that it respects sealed spaces.
+#   5. No log line makes readable what may hold a note's title or text, a file name or a path: an
+#      error's description, a URL, a path, a title, a name or a body is never logged with
+#      `privacy: .public`.
+#   6. Workflows use actions pinned to a commit, and give their token no more than read access unless a
+#      job asks for more itself.
 #
 # Given an app bundle, it also checks the entitlements that app is really signed with. Use a Release
 # build for that: Xcode adds a debugging entitlement to Debug builds.
@@ -73,7 +78,28 @@ if [[ -f "$retrieval" ]]; then
     done
 fi
 
+# 5. Privacy in logs: what may name the user's notes or files is never public.
+leaks=$(grep -rnE --include='*.swift' \
+    '(localizedDescription|\.path|[Uu][Rr][Ll]|[Tt]itle|[Nn]ame|[Bb]ody|[Tt]ext|[Pp]rompt)[A-Za-z]*(\)[A-Za-z.]*)*, privacy: \.public' \
+    Elenath ElenathCore || true)
+if [[ -n "$leaks" ]]; then
+    fail "These log lines make a title, a text, a file name or a path readable:
+$leaks"
+fi
+
+# 6. Workflows: pinned actions, read-only tokens by default.
+for workflow in .github/workflows/*.yml; do
+    unpinned=$(grep -nE '^\s*-?\s*uses:' "$workflow" | grep -vE 'uses:\s*[^@]+@[0-9a-f]{40}(\s|$)' || true)
+    if [[ -n "$unpinned" ]]; then
+        fail "$workflow uses actions that aren't pinned to a commit:
+$unpinned"
+    fi
+    if ! awk '/^permissions:/ { getline; if ($0 ~ /^  contents: read$/) found = 1 } END { exit !found }' "$workflow"; then
+        fail "$workflow must give its token \"contents: read\" at the top; a job that writes asks for it itself."
+    fi
+done
+
 if [[ $status -eq 0 ]]; then
-    echo "The project follows its rules: no packages, no UI code in ElenathCore, sandboxed with no network, every query leak-tested."
+    echo "The project follows its rules: no packages, no UI code in ElenathCore, sandboxed with no network, every query leak-tested, nothing private logged in the open, pinned workflows."
 fi
 exit $status

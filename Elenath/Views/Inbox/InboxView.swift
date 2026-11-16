@@ -134,7 +134,7 @@ struct InboxView: View {
         if let listing = try? await services.catalog.listing(of: .root, in: .inbox) {
             self.listing = listing
         }
-        if let hits = try? await services.retrieval.notes(in: .root, of: .inbox) {
+        if let hits = try? await services.retrieval.notes(in: .root, of: .inbox, from: .inbox) {
             var byPath: [ItemPath: NoteHit] = [:]
             for hit in hits {
                 byPath[hit.note.path] = hit

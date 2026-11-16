@@ -96,6 +96,13 @@ enum LibraryMessages {
                 String(localized: "This version won't change it."))
         case NoteStoreError.notFound:
             return String(localized: "That file isn't there any more. It may have been moved or deleted in Finder.")
+        case NoteStoreError.cannotPutBack(let name):
+            return String(
+                localized:
+                    "Elenath can't take “\(name)” back out of the Trash. In Finder, open the Trash, select it and choose File › Put Back."
+            )
+        case NoteStoreError.tooLarge:
+            return String(localized: "That note is too large for Elenath to open. Open it in another app.")
         case LibraryCatalogError.nameTaken(let name):
             return String(localized: "There is already something called “\(name)” in your library.")
         case LibraryCatalogError.reservedName(let name):

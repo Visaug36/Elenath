@@ -14,6 +14,8 @@ public protocol FileSystem: Sendable {
     /// Creates a folder and any missing parents. Succeeds if the folder already exists.
     func createDirectory(at url: URL) throws
     func readData(at url: URL) throws -> Data
+    /// At most the first `maximumByteCount` bytes of a regular file, without reading the rest.
+    func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data
     /// Writes to a temporary file first and then renames it over `url`, so readers see either the old
     /// or the new contents, never a half-written file.
     func writeAtomically(_ data: Data, to url: URL) throws
@@ -36,6 +38,14 @@ public protocol FileSystem: Sendable {
     func info(at url: URL) -> FileInfo?
 }
 
+extension FileSystem {
+    /// Reads the whole file and keeps its beginning: for file systems in tests. `LocalFileSystem` reads
+    /// only what is asked for.
+    public func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data {
+        try readData(at: url).prefix(maximumByteCount)
+    }
+}
+
 /// What identifies a file on its volume. It survives a rename or a move within the volume, so Elenath can
 /// follow a note that was renamed in Finder.
 public struct FileIdentity: Hashable, Sendable {
@@ -52,17 +62,21 @@ public struct FileIdentity: Hashable, Sendable {
 public struct FileInfo: Hashable, Sendable {
     public var isDirectory: Bool
     public var isSymbolicLink: Bool
+    /// A named pipe, socket or device: never read, listed, copied or imported. Reading a named pipe
+    /// waits for a writer that may never come.
+    public var isSpecial: Bool
     public var byteCount: Int64
     public var modified: Date?
     public var created: Date?
     public var identity: FileIdentity?
 
     public init(
-        isDirectory: Bool, isSymbolicLink: Bool = false, byteCount: Int64 = 0, modified: Date? = nil,
-        created: Date? = nil, identity: FileIdentity? = nil
+        isDirectory: Bool, isSymbolicLink: Bool = false, isSpecial: Bool = false, byteCount: Int64 = 0,
+        modified: Date? = nil, created: Date? = nil, identity: FileIdentity? = nil
     ) {
         self.isDirectory = isDirectory
         self.isSymbolicLink = isSymbolicLink
+        self.isSpecial = isSpecial
         self.byteCount = byteCount
         self.modified = modified
         self.created = created
@@ -101,8 +115,25 @@ public struct LocalFileSystem: FileSystem {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
     }
 
+    /// Reads a regular file. Anything else (a named pipe, a socket, a device) is refused before it is
+    /// opened, since reading it could wait forever.
     public func readData(at url: URL) throws -> Data {
-        try Data(contentsOf: url)
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let type = attributes[.type] as? FileAttributeType
+        guard type == .typeRegular else {
+            throw CocoaError(.fileReadUnknown, userInfo: [NSURLErrorKey: url])
+        }
+        return try Data(contentsOf: url)
+    }
+
+    public func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw CocoaError(.fileReadUnknown, userInfo: [NSURLErrorKey: url])
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        return try handle.read(upToCount: maximumByteCount) ?? Data()
     }
 
     public func writeAtomically(_ data: Data, to url: URL) throws {
@@ -158,6 +189,7 @@ public struct LocalFileSystem: FileSystem {
         return FileInfo(
             isDirectory: type == .typeDirectory,
             isSymbolicLink: type == .typeSymbolicLink,
+            isSpecial: type != .typeRegular && type != .typeDirectory && type != .typeSymbolicLink,
             byteCount: (attributes[.size] as? NSNumber)?.int64Value ?? 0,
             modified: attributes[.modificationDate] as? Date,
             created: attributes[.creationDate] as? Date,

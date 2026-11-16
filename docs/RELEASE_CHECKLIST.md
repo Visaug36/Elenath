@@ -1,14 +1,41 @@
 # Release checklist
 
-Do this pass on a real Mac before a release that people will rely on (0.1.0 and later). CI can't check any of
-it. Test both **Night** and **Dawn**.
+Before every release: the review in section R, then this pass on a real Mac for a release that people will
+rely on (0.1.0 and later). CI can't check the Mac part. Test both **Night** and **Dawn**.
 
 This list grows with the app: each phase adds its own section.
+
+## R. The review, before every release
+
+Since 0.1.1, every release is reviewed for errors and security problems first, by an independent reviewer
+(a separate agent or person that didn't write the code), across the whole app and repository, not only what
+changed. Every finding is fixed with a test that fails without the fix, or written down in CLAUDE.md's log
+with the reason it stays. Cover at least:
+
+- [ ] **Files.** Nothing is read or written outside the library and Elenath's own container: symbolic links,
+      named pipes and odd names in imported folders and in the library, path tricks in titles, links and
+      chat exports, Recovery and Inbox copies, `.space` and `.elenath` folders that are links.
+- [ ] **Untrusted input.** Malformed, huge and hostile Markdown, front matter, chat exports, Word, RTF,
+      web pages, PDFs, pictures, library.json and space.json: nothing crashes, hangs or eats memory. Time
+      that grows faster than the input counts as a hang (`HostileInputTests.expectLinear`).
+- [ ] **Links and files in notes.** ⌘-click opens web and mail links at once and asks about anything else;
+      files that could run as a program are asked about (`OpenPolicy`).
+- [ ] **SQLite.** Every value is bound, search text can't break a full-text query, a damaged database is
+      replaced.
+- [ ] **Privacy.** Logs, the diagnostics report and crash output never contain note text, titles, file names
+      or paths (`scripts/check-rules.sh` rule 5 catches the obvious ones; read the rest).
+- [ ] **Sealing.** Try to break it: every `Retrieval` query from every workplace, the editor's rescue and
+      Recovery paths, imports, and anything new in this release (`SealingLeakTests`).
+- [ ] **The repository.** No personal data added to the history. Workflows have the least permissions they
+      need, actions pinned to commits, and nothing a pull request from a fork could use to push, release or
+      read secrets (`scripts/check-rules.sh` rule 6).
+- [ ] **The crash check** (CI's "Crash check" job) passes: the `-demo` app walks through its screens and
+      actions, hostile imports included, without crashing, hanging or reporting an error.
 
 ## 0. Before you start
 
 - [ ] `main` is green in CI: the project's rules, lint, tests, the String Catalog check, an arm64 Release
-      archive and zero warnings.
+      archive, zero warnings and the crash check.
 - [ ] `MARKETING_VERSION` in the Xcode project is the version to release.
 - [ ] `CHANGELOG.md` has a `## [X.Y.Z] - YYYY-MM-DD` section for it.
 
@@ -46,7 +73,25 @@ This list grows with the app: each phase adds its own section.
       it, and other spaces' don't show up inside it.
 - [ ] Settings → Files: Rebuild Index, and moving the library to another folder.
 
-## 4. Only a real Mac can tell
+## 4. Safety (from 0.1.1)
+
+- [ ] ⌘-click on a web or mail link opens it at once. A link to another app (`zotero://…`, `file://…`) asks
+      first and names the app. A PDF or picture in `Attachments` opens in its app; an app, a script or a
+      `.webloc` there asks first, and "Show in Finder" is the default.
+- [ ] A note with dozens of large photos scrolls smoothly, and Elenath stays under 400 MB in Activity Monitor.
+- [ ] A note over 2 MB opens as plain text and typing in it is smooth. A note over 16 MB isn't opened: a
+      banner offers another app and Finder.
+- [ ] Importing a saved web page (`.html`, `.webarchive`) brings in its text and loads nothing from the web.
+- [ ] Importing an Obsidian vault: its `Attachments` folder arrives, and the pictures its notes embed show.
+- [ ] A note of a sealed space deleted in Finder while it has unsaved edits: on closing, the edits are a
+      conflict copy in that space, never in the Inbox.
+- [ ] Move a note of your library to the Trash, then ⌘Z: it comes back. (CI's runner showed this for a
+      library inside Elenath's own container; a library in Documents may behave differently in the sandbox.
+      If Elenath says to use Finder's Put Back instead, that's the known fallback; report it.)
+- [ ] Rename a note in its title field, move it with drag and drop, then ⌘Z twice: it goes back, then gets
+      its old name back, one step at a time.
+
+## 5. Only a real Mac can tell
 
 These are open questions from the brief. Version 0.1 has a diagnostics report (Settings → Files) that checks
 them and can be copied.

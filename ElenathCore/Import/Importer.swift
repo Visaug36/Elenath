@@ -94,6 +94,21 @@ public actor Importer {
             case .skipped(let source, _):
                 report.skipped.append(source)
                 continue
+            case .folder(let name, let children)
+            where NameSanitizer.key(name) == NameSanitizer.key(NameSanitizer.attachmentsFolderName):
+                // A vault's attachments folder (Obsidian keeps one): its files go into the Attachments folder
+                // of the notes beside it, where Elenath looks for them.
+                let sources = Importer.files(in: children)
+                do {
+                    report.files += try await noteStore.importAttachments(sources, into: folder, container: container)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    report.failed.append(.init(source: URL(fileURLWithPath: name), message: String(describing: error)))
+                }
+                state.completed += sources.count
+                progress(state)
+                continue
             case .folder(let name, let children):
                 do {
                     let created = try await noteStore.createFolder(named: name, in: folder, container: container)
@@ -173,9 +188,8 @@ public actor Importer {
                     parts.append(message.text)
                 }
                 for name in message.attachmentNames {
-                    let file = mediaFolder.appending(component: name, directoryHint: .notDirectory)
-                    guard fileSystem.info(at: file) != nil,
-                        let copy = try await noteStore.addAttachments([file], to: note.ref).first
+                    guard let file = Importer.mediaFile(named: name, in: mediaFolder, fileSystem: fileSystem),
+                        let copy = try? await noteStore.addAttachments([file], to: note.ref).first
                     else {
                         parts.append("(\(name) was not in the export)")
                         continue
@@ -194,6 +208,30 @@ public actor Importer {
             }
             report.notes.append(note.ref)
         }
+    }
+
+    /// Every file a plan names, in folders too, as it is: for a vault's attachments folder.
+    static func files(in items: [ImportItem]) -> [URL] {
+        items.flatMap { item -> [URL] in
+            switch item {
+            case .folder(_, let children): files(in: children)
+            case .skipped: []
+            default: item.source.map { [$0] } ?? []
+            }
+        }
+    }
+
+    /// The file a chat message names, if it is a regular file right in the export's folder. The name comes
+    /// from the chat's text, so anything else is refused: a path ("../", "/"), a hidden name, a folder, a
+    /// link, or a name that leads outside the folder once links are resolved.
+    static func mediaFile(named name: String, in folder: URL, fileSystem: any FileSystem) -> URL? {
+        guard ItemPath(name: name) != nil, !name.hasPrefix("."), !name.contains("/") else { return nil }
+        let file = folder.appending(component: name, directoryHint: .notDirectory)
+        guard file.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL,
+            PathContainment.isStrictlyInside(file, folder: folder),
+            let info = fileSystem.info(at: file), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial
+        else { return nil }
+        return file
     }
 
     /// How a note refers to a file in the `Attachments` folder beside it: an embed for what can be shown

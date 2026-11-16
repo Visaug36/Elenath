@@ -26,10 +26,15 @@ extension AppModel {
             return
         }
         stepsInFlight += 1
-        // The open note saves what was typed before the step, and nothing while it runs; afterwards it
-        // shows what the step did and saves what was typed meanwhile, where the note is then.
-        let open = session
+        // An undo or redo that fails leaves the files unlike what the older steps expect, so those are
+        // dropped rather than fail one after another.
+        let isUndoOrRedo = undoManager?.isUndoing == true || undoManager?.isRedoing == true
+        let previous = lastStep
         let work = Task { @MainActor () -> UndoableStep? in
+            await previous?.value
+            // The note open when the step starts saves what was typed before it, and nothing while it runs;
+            // afterwards it shows what the step did and saves what was typed meanwhile, where the note is then.
+            let open = self.session
             await open?.beginStep()
             let inverse: UndoableStep?
             do {
@@ -37,13 +42,23 @@ extension AppModel {
             } catch {
                 self.report(error)
                 inverse = nil
+                if isUndoOrRedo {
+                    self.undoManager?.removeAllActions(withTarget: self)
+                }
             }
             await open?.endStep()
             self.stepsInFlight -= 1
             self.stepsFinished()
             return inverse
         }
+        lastStep = Task { _ = await work.value }
         guard let undoManager else { return }
+        // Each step is an undo group of its own. AppKit groups by event, so steps started without one (link
+        // repair, the self-check, later Nano bot) would otherwise share a group and be undone together.
+        let groupsItself = !isUndoOrRedo && undoManager.groupingLevel == 0
+        if groupsItself {
+            undoManager.beginUndoGrouping()
+        }
         undoManager.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
                 model.run(
@@ -55,6 +70,9 @@ extension AppModel {
             }
         }
         undoManager.setActionName(name)
+        if groupsItself {
+            undoManager.endUndoGrouping()
+        }
     }
 
     // MARK: - Notes
@@ -190,14 +208,15 @@ extension AppModel {
         }
     }
 
-    /// Opens a file that isn't a note in the app the Mac uses for it.
+    /// Opens a file that isn't a note in the app the Mac uses for it, asking first about anything that
+    /// could run as a program (`openLibraryFile`).
     func openFile(_ path: ItemPath, in container: Container) {
         guard let services else { return }
         Task {
             guard let url = try? await services.catalog.url(for: path, in: container, isDirectory: false) else {
                 return
             }
-            NSWorkspace.shared.open(url)
+            openLibraryFile(url)
         }
     }
 
@@ -296,8 +315,9 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            let context = try await services.retrieval.linkContext(for: note.container)
-            let linking = try await services.retrieval.linkingNotes(to: note)
+            let workplace = Reach.workplace(of: note.container)
+            let context = try await services.retrieval.linkContext(for: note.container, from: workplace)
+            let linking = try await services.retrieval.linkingNotes(to: note, from: workplace)
             let renamed = try await services.notes.rename(note, to: title)
             guard renamed != note else { return nil }
             model.markOwnChange(renamed.container, renamed.path)
@@ -317,15 +337,18 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let isOpen = model.session?.ref == note
-            let context = try await services.retrieval.linkContext(for: note.container)
-            let linking = try await services.retrieval.linkingNotes(to: note)
+            let workplace = Reach.workplace(of: note.container)
+            let context = try await services.retrieval.linkContext(for: note.container, from: workplace)
+            let linking = try await services.retrieval.linkingNotes(to: note, from: workplace)
             // Attachments other notes use are copied, not moved. Until the index is complete, all are.
-            let shared = model.isIndexing ? nil : try? await services.retrieval.attachmentNamesShared(by: note)
+            let shared =
+                model.isIndexing
+                ? nil : try? await services.retrieval.attachmentNamesShared(by: note, from: workplace)
             let moved = try await services.notes.move(note, to: folder, in: container, sharedAttachments: shared)
             guard moved != note else { return nil }
             model.markOwnChange(moved.container, moved.path)
             // Links follow the note only where they can still reach it.
-            let reach = Reach(workplace: Reach.workplace(of: note.container), spaces: model.spaces)
+            let reach = Reach(workplace: workplace, spaces: model.spaces)
             let after = reach.allows(moved.container) ? context.moving(note, to: moved) : context.removing(note)
             let changed = await model.rewriteLinks(
                 moves: [note: moved], linking: linking, before: context, after: after)
@@ -418,7 +441,7 @@ extension AppModel {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let workplace = Reach.workplace(of: container)
-            let context = try await services.retrieval.linkContext(for: container)
+            let context = try await services.retrieval.linkContext(for: container, from: workplace)
             let linking = try await services.retrieval.notesLinking(throughFolderNamed: folder.name, from: workplace)
             let renamed = try await services.notes.renameFolder(folder, in: container, to: name)
             guard renamed != folder else { return nil }
@@ -465,7 +488,7 @@ extension AppModel {
             if edited.name != current.name {
                 let container = Container.space(edited.id)
                 let workplace = Reach.workplace(of: container)
-                let context = try await services.retrieval.linkContext(for: container)
+                let context = try await services.retrieval.linkContext(for: container, from: workplace)
                 let linking = try await services.retrieval.notesLinking(
                     throughFolderNamed: current.name, from: workplace)
                 saved = try await services.catalog.renameSpace(edited.id, to: edited.name)

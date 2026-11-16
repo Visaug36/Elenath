@@ -29,6 +29,9 @@ private struct LineScanner {
     let offset: Int
     var state: BlockState
     var result = MarkdownScan()
+    /// The stretch of inline text being scanned, and its pairs once something needed them.
+    private var stretch = 0..<0
+    private var pairs: Pairs?
 
     init(units: [UInt16], offset: Int, state: BlockState) {
         self.units = units
@@ -327,10 +330,74 @@ private struct LineScanner {
         var canClose: Bool
     }
 
+    /// Where each "[" and "(" of a stretch is closed, and where its runs of backticks start. Found in one
+    /// pass when the first link or code span needs them, so a line full of brackets or backticks is still
+    /// read in time that grows with its length.
+    private struct Pairs {
+        /// The "]" that closes each "[", by the "["'s index. A backslash makes the unit after it plain.
+        var brackets: [Int: Int] = [:]
+        /// The ")" that closes each "(", the same way.
+        var parens: [Int: Int] = [:]
+        /// Where each run of backticks starts, by the run's length, in order. Backslashes don't count
+        /// here: inside code they are plain text.
+        var codeRuns: [Int: [Int]] = [:]
+
+        init(units: [UInt16], range: Range<Int>) {
+            var openBrackets: [Int] = []
+            var openParens: [Int] = []
+            var index = range.lowerBound
+            while index < range.upperBound {
+                switch units[index] {
+                case Unit.backslash:
+                    index += 1
+                case Unit.openBracket:
+                    openBrackets.append(index)
+                case Unit.closeBracket:
+                    if let open = openBrackets.popLast() {
+                        brackets[open] = index
+                    }
+                case Unit.openParen:
+                    openParens.append(index)
+                case Unit.closeParen:
+                    if let open = openParens.popLast() {
+                        parens[open] = index
+                    }
+                default:
+                    break
+                }
+                index += 1
+            }
+            index = range.lowerBound
+            while index < range.upperBound {
+                guard units[index] == Unit.backtick else {
+                    index += 1
+                    continue
+                }
+                var runEnd = index
+                while runEnd < range.upperBound, units[runEnd] == Unit.backtick {
+                    runEnd += 1
+                }
+                codeRuns[runEnd - index, default: []].append(index)
+                index = runEnd
+            }
+        }
+    }
+
+    private mutating func stretchPairs() -> Pairs {
+        if let pairs {
+            return pairs
+        }
+        let found = Pairs(units: units, range: stretch)
+        pairs = found
+        return found
+    }
+
     private mutating func scanInline(_ range: Range<Int>) {
         var index = range.lowerBound
         let end = range.upperBound
         var delimiters: [Delimiter] = []
+        stretch = range
+        pairs = nil
         let firstSpan = result.spans.count
         defer {
             // Emphasis is paired last, so put this stretch's spans back in the order they are written.
@@ -390,25 +457,24 @@ private struct LineScanner {
             openEnd += 1
         }
         let length = openEnd - start
-        var index = openEnd
-        while index < end {
-            guard units[index] == Unit.backtick else {
-                index += 1
-                continue
+        // The first run of the same length after this one closes it.
+        let runs = stretchPairs().codeRuns[length] ?? []
+        var low = 0
+        var high = runs.count
+        while low < high {
+            let middle = (low + high) / 2
+            if runs[middle] < openEnd {
+                low = middle + 1
+            } else {
+                high = middle
             }
-            var runEnd = index
-            while runEnd < end, units[runEnd] == Unit.backtick {
-                runEnd += 1
-            }
-            if runEnd - index == length {
-                add(.marker, start..<openEnd)
-                add(.code, openEnd..<index)
-                add(.marker, index..<runEnd)
-                return runEnd
-            }
-            index = runEnd
         }
-        return openEnd
+        guard low < runs.count, runs[low] + length <= end else { return openEnd }
+        let close = runs[low]
+        add(.marker, start..<openEnd)
+        add(.code, openEnd..<close)
+        add(.marker, close..<(close + length))
+        return close + length
     }
 
     /// A wiki link, an embed, a Markdown link or an image that starts with the "[" at `open` (with a "!"
@@ -450,47 +516,12 @@ private struct LineScanner {
     }
 
     private mutating func scanMarkdownLink(start: Int, open: Int, isImage: Bool, end: Int) -> Int? {
-        // The text: up to the "]" that closes this "[".
-        var depth = 0
-        var close = open + 1
-        while close < end {
-            let unit = units[close]
-            if unit == Unit.backslash {
-                close += 2
-                continue
-            }
-            if unit == Unit.openBracket {
-                depth += 1
-            } else if unit == Unit.closeBracket {
-                if depth == 0 {
-                    break
-                }
-                depth -= 1
-            }
-            close += 1
-        }
-        guard close + 1 < end, units[close] == Unit.closeBracket, units[close + 1] == Unit.openParen else { return nil }
-
-        // The destination: up to the ")" that closes the "(".
-        depth = 0
-        var parenClose = close + 2
-        while parenClose < end {
-            let unit = units[parenClose]
-            if unit == Unit.backslash {
-                parenClose += 2
-                continue
-            }
-            if unit == Unit.openParen {
-                depth += 1
-            } else if unit == Unit.closeParen {
-                if depth == 0 {
-                    break
-                }
-                depth -= 1
-            }
-            parenClose += 1
-        }
-        guard parenClose < end, units[parenClose] == Unit.closeParen else { return nil }
+        // The text runs to the "]" that closes this "[", and the destination to the ")" that closes the
+        // "(" right after it.
+        let pairs = stretchPairs()
+        guard let close = pairs.brackets[open], close + 1 < end, units[close + 1] == Unit.openParen,
+            let parenClose = pairs.parens[close + 1], parenClose < end
+        else { return nil }
 
         var destination = (close + 2)..<parenClose
         while destination.lowerBound < destination.upperBound, units[destination.lowerBound] == Unit.space {
@@ -569,14 +600,21 @@ private struct LineScanner {
             index += 1
         }
         // Punctuation at the end belongs to the sentence, and so does a ")" that nothing opened.
+        var opened = 0
+        var closed = 0
+        for unit in units[start..<index] {
+            if unit == Unit.openParen {
+                opened += 1
+            } else if unit == Unit.closeParen {
+                closed += 1
+            }
+        }
         while index > hostStart {
             let last = units[index - 1]
             if LineScanner.trailingPunctuation.contains(last) {
                 index -= 1
-            } else if last == Unit.closeParen {
-                let opened = units[start..<index].filter { $0 == Unit.openParen }.count
-                let closed = units[start..<index].filter { $0 == Unit.closeParen }.count
-                guard closed > opened else { break }
+            } else if last == Unit.closeParen && closed > opened {
+                closed -= 1
                 index -= 1
             } else {
                 break
@@ -643,16 +681,24 @@ private struct LineScanner {
     /// Pairs closers with the nearest opener of the same kind, as CommonMark does.
     private mutating func matchEmphasis(_ delimiters: [Delimiter]) {
         var openers: [Delimiter] = []
+        // CommonMark's "openers bottom": no opener below this index can close a run of the marker, so a
+        // line of runs that never pair is still read once. An opener that can't close a marker never
+        // can later, because its run only gets shorter.
+        var bottoms: [UInt16: Int] = [:]
         for delimiter in delimiters {
             var closer = delimiter
             let isPair = closer.marker == Unit.tilde || closer.marker == Unit.equals
             while closer.canClose && closer.count > 0 {
+                if isPair && closer.count < 2 {
+                    break
+                }
+                let bottom = bottoms[closer.marker] ?? 0
                 guard
-                    let position = openers.lastIndex(where: {
+                    let position = openers[bottom...].lastIndex(where: {
                         $0.marker == closer.marker && $0.canOpen && (!isPair || $0.count >= 2)
                     })
-                else { break }
-                if isPair && closer.count < 2 {
+                else {
+                    bottoms[closer.marker] = openers.count
                     break
                 }
                 var opener = openers[position]
@@ -675,6 +721,9 @@ private struct LineScanner {
                     openers.remove(at: position)
                 } else {
                     openers[position] = opener
+                }
+                for (marker, bottom) in bottoms where bottom > openers.count {
+                    bottoms[marker] = openers.count
                 }
             }
             if closer.count > 0 && closer.canOpen {

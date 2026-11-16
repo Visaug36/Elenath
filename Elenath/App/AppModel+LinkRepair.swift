@@ -83,7 +83,11 @@ extension AppModel {
                     all.append(move)
                 }
             }
-            let linking = all.isEmpty ? [] : ((try? await services.retrieval.linkingNotes(toMoved: all)) ?? [])
+            let linking =
+                all.isEmpty
+                ? []
+                : ((try? await services.retrieval.linkingNotes(toMoved: all, from: Reach.workplace(of: container)))
+                    ?? [])
             linkRepairOffers[container] =
                 linking.isEmpty ? nil : LinkRepairOffer(container: container, moves: all, linking: linking)
         }
@@ -109,11 +113,12 @@ extension AppModel {
             var rewritten: [BodyChange] = []
             for (container, group) in Dictionary(grouping: moves, by: \.from.container)
             where group.allSatisfy({ $0.to.container == container }) {
-                let after = try await services.retrieval.linkContext(for: container)
+                let workplace = Reach.workplace(of: container)
+                let after = try await services.retrieval.linkContext(for: container, from: workplace)
                 // Only moves that still hold: the note is in its new place and nothing took its old one.
                 let holding = group.filter { after.catalog.contains($0.to) && !after.catalog.contains($0.from) }
                 guard !holding.isEmpty else { continue }
-                let linking = try await services.retrieval.linkingNotes(toMoved: holding)
+                let linking = try await services.retrieval.linkingNotes(toMoved: holding, from: workplace)
                 guard !linking.isEmpty else { continue }
                 let before = holding.reduce(after) { context, move in context.moving(move.to, to: move.from) }
                 let newPlace = Dictionary(holding.map { ($0.from, $0.to) }, uniquingKeysWith: { first, _ in first })

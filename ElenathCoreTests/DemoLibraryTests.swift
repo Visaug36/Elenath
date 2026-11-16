@@ -74,7 +74,8 @@ struct DemoLibraryTests {
                 let body = try #require(try await retrieval.text(of: hit.note, from: .space(space.id)))
                 for span in MarkdownScanner.scan(body).links {
                     guard case .wiki(let link) = span.target else { continue }
-                    let resolution = try await retrieval.resolve(link, from: hit.note)
+                    let resolution = try await retrieval.resolve(
+                        link, in: hit.note, from: Reach.workplace(of: hit.note.container))
                     guard case .resolved(let target) = resolution else {
                         Issue.record("\(link.written) in \(hit.title) doesn't resolve")
                         continue
@@ -90,7 +91,10 @@ struct DemoLibraryTests {
         // The goal has its notes pointing at it.
         let uni = try #require(snapshot.spaces.first)
         let goal = NoteRef(container: .space(uni.id), path: ItemPath("Pass Physics 1.md")!)
-        #expect(try await retrieval.backlinks(to: goal).map(\.source.title) == ["Lecture 7 notes"])
+        #expect(
+            try await retrieval.backlinks(to: goal, from: Reach.workplace(of: goal.container)).map(\.source.title) == [
+                "Lecture 7 notes"
+            ])
         #expect(try await retrieval.openTasks(from: .everywhere, limit: 100).count == 10)
         #expect(try await retrieval.inboxCount() == 4)
         // What was changed last comes first.

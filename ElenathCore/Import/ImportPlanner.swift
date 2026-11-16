@@ -8,6 +8,8 @@ public enum SkipReason: Hashable, Sendable {
     case symbolicLink
     /// It could not be read.
     case unreadable
+    /// A named pipe, socket or device: not a file with something in it.
+    case special
 }
 
 /// What will happen to one dropped item (docs/ARCHITECTURE.md, "Import").
@@ -59,6 +61,9 @@ public enum ImportPlanner {
         if info.isSymbolicLink {
             return .skipped(source: url, reason: .symbolicLink)
         }
+        if info.isSpecial {
+            return .skipped(source: url, reason: .special)
+        }
         let fileExtension = url.pathExtension.lowercased()
         let title = fileExtension.isEmpty ? name : String(name.dropLast(fileExtension.count + 1))
         if info.isDirectory {
@@ -84,9 +89,12 @@ public enum ImportPlanner {
             if fileExtension == "txt", isChat(url, fileSystem: fileSystem) {
                 return .chatExport(source: url)
             }
+            // Text too large to open as a note is kept as a file (`NoteLimits`).
+            guard info.byteCount <= NoteLimits.maximumImportedNoteBytes else { return .file(source: url) }
             return .note(source: url, title: title)
         }
         if documentExtensions.contains(fileExtension) {
+            guard info.byteCount <= NoteLimits.maximumConvertedDocumentBytes else { return .file(source: url) }
             return .document(source: url, title: title)
         }
         return .file(source: url)

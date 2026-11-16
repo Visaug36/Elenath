@@ -105,9 +105,13 @@ final class MarkdownStyler {
 
     // MARK: - Whole notes
 
+    /// A note larger than `NoteLimits.maximumStyledBytes` is shown as plain text, so typing in it stays
+    /// quick: nothing is styled while this is set.
+    var isPlain = false
+
     /// Styles the whole text: when a note is opened.
     func restyleAll(_ storage: NSTextStorage) {
-        guard storage.length > 0 else { return }
+        guard !isPlain, storage.length > 0 else { return }
         let scan = MarkdownScanner.scan(storage.string)
         storage.beginEditing()
         apply(scan, to: storage)
@@ -117,6 +121,7 @@ final class MarkdownStyler {
     /// Styles the lines an edit touched, and the lines after them whose meaning it changed (a code fence
     /// that was opened or closed). `editedRange` is in the text as it is now.
     func restyle(_ storage: NSTextStorage, after editedRange: NSRange) {
+        guard !isPlain else { return }
         let text = storage.string as NSString
         let length = text.length
         guard length > 0 else { return }

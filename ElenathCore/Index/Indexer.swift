@@ -69,19 +69,25 @@ public actor Indexer {
     /// Brings a container's index in step with its folder, touching only what changed.
     @discardableResult
     public func refresh(_ container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performRefresh(container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performRefresh(container) }
+        }
     }
 
     /// Indexes the given notes again, or drops them when they are gone: what follows a save.
     @discardableResult
     public func update(_ paths: [ItemPath], in container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performUpdate(paths, in: container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performUpdate(paths, in: container) }
+        }
     }
 
     /// Empties a container's index and fills it again from the folder.
     @discardableResult
     public func rebuild(_ container: Container) async throws -> IndexReport {
-        try await serialized(container) { try await self.performRebuild(container) }
+        try await serialized(container) {
+            try await self.replacingDamaged(container) { try await self.performRebuild(container) }
+        }
     }
 
     /// Refreshes the Inbox and every space. A container that fails is logged and skipped.
@@ -140,6 +146,20 @@ public actor Indexer {
         return try await task.value
     }
 
+    /// Runs `work`. When the container's database turns out to be damaged, it is thrown away (the index
+    /// is a cache, the folder is the truth) and the whole container is indexed again from the folder.
+    private func replacingDamaged(
+        _ container: Container, _ work: () async throws -> IndexReport
+    ) async throws -> IndexReport {
+        do {
+            return try await work()
+        } catch let error as SQLiteError where error.isDamagedFile {
+            log.error("Replacing a damaged index", private: String(describing: error))
+            removeIndex(of: container)
+            return try await performRefresh(container)
+        }
+    }
+
     private func index(for container: Container) throws -> SpaceIndex {
         if let index = indexes[container] {
             return index
@@ -149,6 +169,12 @@ public actor Indexer {
         let index = try SpaceIndex(url: url, container: container)
         indexes[container] = index
         return index
+    }
+
+    /// A note's bytes, at most `NoteLimits.maximumIndexedBytes` of them, without a character cut in half.
+    private static func readBeginning(of url: URL, fileSystem: any FileSystem) throws -> Data {
+        let data = try fileSystem.readData(at: url, upTo: NoteLimits.maximumIndexedBytes)
+        return data.count < NoteLimits.maximumIndexedBytes ? data : NoteLimits.droppingSplitCharacter(data)
     }
 
     private func waitWhilePaused() async throws {
@@ -222,7 +248,7 @@ public actor Indexer {
             try index.transaction {
                 for (entry, existing) in chunk {
                     let url = entry.path.url(under: base, isDirectory: false)
-                    guard let data = try? fileSystem.readData(at: url) else { continue }
+                    guard let data = try? Indexer.readBeginning(of: url, fileSystem: fileSystem) else { continue }
                     let record = NoteRecord(
                         path: entry.path, data: data, info: fileSystem.info(at: url), timeZone: timeZone())
                     if let existing {
@@ -274,8 +300,8 @@ public actor Indexer {
         try index.transaction {
             for (path, url) in urls {
                 let existing = known[NameSanitizer.key(path.description)]
-                guard let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink,
-                    let data = try? fileSystem.readData(at: url)
+                guard let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial,
+                    let data = try? Indexer.readBeginning(of: url, fileSystem: fileSystem)
                 else {
                     if let existing {
                         try index.remove(rowID: existing.rowID)

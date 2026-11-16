@@ -296,7 +296,8 @@ struct IndexTests {
             try await retrieval.recentNotes(from: .everywhere, limit: 3).map(\.title) == [
                 "App idea", "Reading list", "Lecture 8",
             ])
-        let folder = try await retrieval.notes(in: ItemPath("Physics")!, of: .space(library.uni.id))
+        let folder = try await retrieval.notes(
+            in: ItemPath("Physics")!, of: .space(library.uni.id), from: .space(library.uni.id))
         #expect(folder.map(\.title) == ["Lecture 7", "Lecture 8"])
         #expect(folder.first?.kind == .goal)
         #expect(folder.first?.preview.hasPrefix("Rotational motion The moment of inertia") == true)
@@ -317,18 +318,22 @@ struct IndexTests {
         let idea = fixture.ref(library.ideas, "App idea.md")
 
         #expect(
-            try await retrieval.resolve(WikiLink(target: "Lecture 8"), from: lecture7)
+            try await retrieval.resolve(WikiLink(target: "Lecture 8"), in: lecture7, from: .space(library.uni.id))
                 == .resolved(fixture.ref(library.uni, "Physics/Lecture 8.md")))
-        #expect(try await retrieval.resolve(WikiLink(target: "App idea"), from: lecture7) == .resolved(idea))
-        #expect(try await retrieval.resolve(WikiLink(target: "Thought"), from: lecture7) == .unresolved)
+        #expect(
+            try await retrieval.resolve(WikiLink(target: "App idea"), in: lecture7, from: .space(library.uni.id))
+                == .resolved(idea))
+        #expect(
+            try await retrieval.resolve(WikiLink(target: "Thought"), in: lecture7, from: .space(library.uni.id))
+                == .unresolved)
 
-        let backlinks = try await retrieval.backlinks(to: reading)
+        let backlinks = try await retrieval.backlinks(to: reading, from: .space(library.uni.id))
         #expect(backlinks.map(\.source.title) == ["Lecture 7", "App idea"])
         #expect(backlinks.first?.context.contains("See [[Reading list]]") == true)
         let body = try NoteText(data: Data(try fixture.read("Uni/Physics/Lecture 7.md").utf8)).body as NSString
         #expect(body.substring(with: try #require(backlinks.first).range) == "[[Reading list]]")
-        #expect(try await retrieval.linkingNotes(to: reading) == [lecture7, idea])
-        #expect(try await retrieval.backlinks(to: idea).isEmpty)
+        #expect(try await retrieval.linkingNotes(to: reading, from: .space(library.uni.id)) == [lecture7, idea])
+        #expect(try await retrieval.backlinks(to: idea, from: .space(library.ideas.id)).isEmpty)
     }
 
     @Test("After a rename in Finder, the notes that linked to the note are found, and their links repaired")
@@ -349,15 +354,15 @@ struct IndexTests {
         #expect(report.moved == [NoteMove(from: old, to: new)])
 
         // The links no longer reach the note, so its backlinks can't find them; judged as they were, they can.
-        #expect(try await retrieval.linkingNotes(to: new).isEmpty)
-        let linking = try await retrieval.linkingNotes(toMoved: report.moved)
+        #expect(try await retrieval.linkingNotes(to: new, from: .space(uni.id)).isEmpty)
+        let linking = try await retrieval.linkingNotes(toMoved: report.moved, from: .space(uni.id))
         #expect(Set(linking) == [lecture7, idea])
 
         // Repaired as the app repairs them, the links reach the note again.
         func file(_ note: NoteRef) -> String {
             (note.container == .space(uni.id) ? "Uni/" : "Ideas/") + note.path.description
         }
-        let after = try await retrieval.linkContext(for: .space(uni.id))
+        let after = try await retrieval.linkContext(for: .space(uni.id), from: .space(uni.id))
         let before = after.moving(new, to: old)
         var texts: [NoteRef: NoteText] = [:]
         for note in linking {
@@ -372,8 +377,8 @@ struct IndexTests {
             try text.data().write(to: fixture.url(file(note)))
         }
         await library.indexer.refreshAll()
-        #expect(Set(try await retrieval.linkingNotes(to: new)) == [lecture7, idea])
-        #expect(try await retrieval.linkingNotes(toMoved: report.moved).isEmpty)
+        #expect(Set(try await retrieval.linkingNotes(to: new, from: .space(uni.id))) == [lecture7, idea])
+        #expect(try await retrieval.linkingNotes(toMoved: report.moved, from: .space(uni.id)).isEmpty)
     }
 
     @Test("A folder renamed in Finder: links between its notes are found, named by where the notes were")
@@ -392,10 +397,10 @@ struct IndexTests {
                     from: fixture.ref(uni, "Physics/Lecture 8.md"), to: fixture.ref(uni, "Mechanics/Lecture 8.md")),
             ])
         #expect(
-            Set(try await library.retrieval.linkingNotes(toMoved: report.moved)) == [
+            Set(try await library.retrieval.linkingNotes(toMoved: report.moved, from: .space(uni.id))) == [
                 fixture.ref(uni, "Physics/Lecture 7.md"), fixture.ref(uni, "Physics/Lecture 8.md"),
             ])
-        #expect(try await library.retrieval.linkingNotes(toMoved: []).isEmpty)
+        #expect(try await library.retrieval.linkingNotes(toMoved: [], from: .everywhere).isEmpty)
     }
 
     @Test("Backlinks find a link to a note whose title has # in it")
@@ -410,10 +415,10 @@ struct IndexTests {
         let target = fixture.ref(uni, "C# notes.md")
         #expect(
             try await retrieval.resolve(
-                WikiLink(inner: "C# notes", isEmbed: false)!, from: fixture.ref(uni, "Linker.md"))
+                WikiLink(inner: "C# notes", isEmbed: false)!, in: fixture.ref(uni, "Linker.md"), from: .space(uni.id))
                 == .resolved(target))
-        #expect(try await retrieval.backlinks(to: target).count == 1)
-        #expect(try await retrieval.linkingNotes(to: target) == [fixture.ref(uni, "Linker.md")])
+        #expect(try await retrieval.backlinks(to: target, from: .space(uni.id)).count == 1)
+        #expect(try await retrieval.linkingNotes(to: target, from: .space(uni.id)) == [fixture.ref(uni, "Linker.md")])
     }
 
     @Test("The link context follows the index: a new note resolves as soon as it is indexed")
@@ -422,13 +427,16 @@ struct IndexTests {
         defer { library.fixture.remove() }
         let fixture = library.fixture
         let lecture7 = fixture.ref(library.uni, "Physics/Lecture 7.md")
-        #expect(try await library.retrieval.resolve(WikiLink(target: "Lab report"), from: lecture7) == .unresolved)
+        #expect(
+            try await library.retrieval.resolve(
+                WikiLink(target: "Lab report"), in: lecture7, from: .space(library.uni.id)) == .unresolved)
         try fixture.write("Results\n", to: "Uni/Lab report.md")
         try await library.indexer.refresh(.space(library.uni.id))
         #expect(
-            try await library.retrieval.resolve(WikiLink(target: "Lab report"), from: lecture7)
+            try await library.retrieval.resolve(
+                WikiLink(target: "Lab report"), in: lecture7, from: .space(library.uni.id))
                 == .resolved(fixture.ref(library.uni, "Lab report.md")))
-        let context = try await library.retrieval.linkContext(for: .space(library.uni.id))
+        let context = try await library.retrieval.linkContext(for: .space(library.uni.id), from: .everywhere)
         #expect(context.catalog.count == 6)
         #expect(Set(context.spaceNames.values) == ["Uni", "Ideas"])
     }
@@ -444,17 +452,22 @@ struct IndexTests {
             try await retrieval.text(of: lecture8, from: .everywhere)
                 == "Angular momentum, continued. Back to [[Lecture 7]].\n")
         #expect(try await retrieval.text(of: lecture8, from: .inbox) == nil)
-        #expect(try await retrieval.note(lecture8)?.title == "Lecture 8")
-        #expect(try await retrieval.note(fixture.ref(library.uni, "Nope.md")) == nil)
+        #expect(try await retrieval.note(lecture8, from: .space(library.uni.id))?.title == "Lecture 8")
+        #expect(try await retrieval.note(lecture8, from: .inbox) == nil)
+        #expect(try await retrieval.note(fixture.ref(library.uni, "Nope.md"), from: .space(library.uni.id)) == nil)
 
         // A copy made in Finder carries the same id. The one created later is the duplicate.
         let original = try fixture.read("Uni/Physics/Lecture 7.md")
         try fixture.write(
             original.replacingOccurrences(of: "2026-10-01", with: "2026-10-02"), to: "Uni/Physics/Lecture 7 copy.md")
         try await library.indexer.refresh(.space(library.uni.id))
-        #expect(try await retrieval.hasDuplicatedIdentity(fixture.ref(library.uni, "Physics/Lecture 7 copy.md")))
-        #expect(try await !retrieval.hasDuplicatedIdentity(fixture.ref(library.uni, "Physics/Lecture 7.md")))
-        #expect(try await !retrieval.hasDuplicatedIdentity(lecture8))
+        #expect(
+            try await retrieval.hasDuplicatedIdentity(
+                fixture.ref(library.uni, "Physics/Lecture 7 copy.md"), from: .space(library.uni.id)))
+        #expect(
+            try await !retrieval.hasDuplicatedIdentity(
+                fixture.ref(library.uni, "Physics/Lecture 7.md"), from: .space(library.uni.id)))
+        #expect(try await !retrieval.hasDuplicatedIdentity(lecture8, from: .space(library.uni.id)))
     }
 
     @Test("Filing destinations name every space and the folders of those that aren't sealed")
@@ -494,6 +507,8 @@ struct IndexTests {
         #expect(
             try await retrieval.search(SearchQuery(text: "number4242"), from: .everywhere).map(\.title) == ["Note 4242"]
         )
-        #expect(try await retrieval.backlinks(to: fixture.ref(big, "Folder 0/Note 100.md")).count == 2)
+        #expect(
+            try await retrieval.backlinks(to: fixture.ref(big, "Folder 0/Note 100.md"), from: .space(big.id)).count == 2
+        )
     }
 }

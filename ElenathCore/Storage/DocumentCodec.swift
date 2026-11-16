@@ -8,6 +8,46 @@ import Foundation
 ///
 /// Files are pretty-printed with sorted keys, so they diff cleanly and stay readable in a text editor.
 public enum DocumentCodec {
+    /// The deepest nesting of arrays and objects a document may have. Elenath's own go a few levels deep;
+    /// a file nested far deeper is damaged or hostile, and parsing it could run out of stack.
+    public static let maximumDepth = 64
+    /// The largest document Elenath reads. Its own are a few kilobytes.
+    public static let maximumByteCount = 8 * 1024 * 1024
+
+    /// Whether `data` is small enough and shallow enough to hand to a JSON parser: one pass over the
+    /// bytes, counting brackets outside strings.
+    public static func isSafeToParse(_ data: Data) -> Bool {
+        guard data.count <= maximumByteCount else { return false }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for byte in data {
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if byte == UInt8(ascii: "\\") {
+                    escaped = true
+                } else if byte == UInt8(ascii: "\"") {
+                    inString = false
+                }
+                continue
+            }
+            switch byte {
+            case UInt8(ascii: "\""):
+                inString = true
+            case UInt8(ascii: "["), UInt8(ascii: "{"):
+                depth += 1
+                if depth > maximumDepth {
+                    return false
+                }
+            case UInt8(ascii: "]"), UInt8(ascii: "}"):
+                depth -= 1
+            default:
+                break
+            }
+        }
+        return true
+    }
     /// The document as file bytes, stamped with its current schema version and `savedAt` (rounded to whole
     /// seconds).
     public static func encode<Document: VersionedDocument>(_ document: Document, savedAt: Date) throws -> Data {
@@ -34,6 +74,9 @@ public enum DocumentCodec {
     public static func decode<Document: VersionedDocument>(
         _ type: Document.Type, from data: Data, migrator: SchemaMigrator
     ) throws -> DecodedDocument<Document> {
+        guard isSafeToParse(data) else {
+            throw DocumentStoreError.unreadable("Too large, or nested too deeply")
+        }
         let parsed: Any
         do {
             parsed = try JSONSerialization.jsonObject(with: data, options: [])

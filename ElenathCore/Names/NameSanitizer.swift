@@ -57,6 +57,17 @@ public enum NameSanitizer {
         return droppingTrailingDotsAndSpaces(base) + suffix
     }
 
+    /// The name of a copy of unsaved edits kept in Recovery: "Title (unsaved 2026-11-10 14.30.05)", in
+    /// local time. Shortened like a conflict title, so the time is never cut off a long title.
+    public static func recoveryTitle(for title: String, now: Date, timeZone: TimeZone) -> String {
+        let suffix = " (unsaved \(stamp(now, in: timeZone, seconds: true)))"
+        var base = sanitizedTitle(title)
+        while !base.isEmpty, (base + suffix).utf8.count > maximumTitleUTF8Length {
+            base.removeLast()
+        }
+        return droppingTrailingDotsAndSpaces(base) + suffix
+    }
+
     /// How names are compared: without regard to case or Unicode normalization, as macOS volumes do.
     /// Two names are the same item when their keys are equal.
     public static func key(_ name: String) -> String {
@@ -166,12 +177,15 @@ public enum NameSanitizer {
 
     /// "2026-11-10 14.30": the wall-clock time in `timeZone`, built from calendar components (no
     /// DateFormatter, so the user's locale and calendar can't change it).
-    private static func stamp(_ date: Date, in timeZone: TimeZone) -> String {
+    private static func stamp(_ date: Date, in timeZone: TimeZone, seconds: Bool = false) -> String {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
         let day = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
-        let time = String(format: "%02d.%02d", parts.hour ?? 0, parts.minute ?? 0)
+        var time = String(format: "%02d.%02d", parts.hour ?? 0, parts.minute ?? 0)
+        if seconds {
+            time += String(format: ".%02d", parts.second ?? 0)
+        }
         return "\(day) \(time)"
     }
 }

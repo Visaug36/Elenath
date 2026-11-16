@@ -400,6 +400,65 @@ public actor NoteStore {
   `create` throw `notFound` and write nothing.
 - **A note that can't be saved** (the disk is full, the drive is gone) is never dropped: the app keeps the
   text, writes it to `Recovery/` in its container, says what happened and retries.
+- **Edits to a note whose file vanished** become a conflict copy where the note was (its folder is made
+  again), while its space is there. Only a space that mixes may send them to the Inbox; a sealed space's
+  text never leaves the space, and goes to Recovery when the space is gone.
+- **Files that aren't regular files** (named pipes, sockets, devices) are never opened: `readData` refuses
+  them before opening, and listings, the index, attachments and imports leave them out.
+
+### Recovery (`RecoveryFolder`)
+
+```swift
+public struct RecoveryFolder: Sendable {
+    public struct Copy: Hashable, Sendable {
+        public var file: URL
+        public var space: SpaceID?               // nil: the Inbox, or a copy kept by 0.1.0
+        public var title: String                 // "Title (unsaved 2026-11-10 14.30.05)"
+    }
+    public init(folder: URL, fileSystem: any FileSystem)   // Recovery/<library id>
+    public func keep(_ data: Data, title: String, from container: Container, now: Date,
+                     timeZone: TimeZone) throws -> URL
+    public func copies() -> [Copy]
+}
+```
+
+- Copies of the Inbox's notes are at the top of the library's Recovery folder, those of a space's notes in a
+  folder named by the space's id (docs/FORMAT.md, "Outside the library").
+- A copy is never replaced: it is written under a hidden name and then renamed, which fails rather than
+  replace a copy that took the name meanwhile, and the next number is tried. A long title is shortened so
+  the time always fits.
+- At the next launch each copy is put back at the top of its own space or of the Inbox. A copy whose space is
+  gone stays in Recovery and is shown in Finder: it may come from a sealed space.
+
+### Opening links and files (`OpenPolicy`)
+
+```swift
+public enum OpenPolicy {
+    public enum Decision: Hashable, Sendable { case open, ask }
+    public static func decision(forLink address: String) -> Decision
+    public static func decision(forFileNamed name: String) -> Decision
+}
+```
+
+- Web and mail links (`http`, `https`, `mailto`) open at once. Any other scheme asks first, naming the app
+  that would open it.
+- Documents, pictures, sound and video open at once, by extension. Anything else, unknown kinds included,
+  asks first, with "Show in Finder" as the default: an app, a script, an installer or a link file could run
+  something.
+- A Markdown link to a file opens regular files only.
+
+### Limits (`NoteLimits`)
+
+| | |
+|---|---|
+| A note isn't opened over | 16 MB (`NoteStore.read` throws `tooLarge`; a banner offers another app) |
+| A note is shown as plain text over | 2 MB (typing stays quick) |
+| The index reads a note's first | 4 MB |
+| Text is imported as a file, not a note, over | 16 MB |
+| A document's text isn't converted over | 64 MB (it is imported as a file) |
+| A settings file (library.json, space.json) is refused over | 8 MB or 64 levels of nesting |
+
+`FileSystem.readData(at:upTo:)` reads a file's beginning without reading the rest.
 
 ## Markdown (`ElenathCore/Markdown`): built
 
@@ -435,6 +494,10 @@ public enum MarkdownScanner {
 - Nothing inside code is a link, a tag or a task.
 - `scanLines` is incremental: after an edit the editor rescans from the first changed line until the block
   state at a line's end equals what it was before the edit. A 1 MB note never rescans whole on a keystroke.
+- **Linear time, whatever the text.** Brackets and parentheses are matched once per stretch of a line, a code
+  span looks up the next run of backticks of its length, a URL's parentheses are counted once, and emphasis
+  keeps CommonMark's "openers bottom", so no line costs more than a few passes over it. `HostileInputTests`
+  checks that pathological notes take time that grows with their length, not faster.
 - Tags and tasks follow docs/FORMAT.md.
 
 ## Links (`ElenathCore/Links`): built
@@ -528,8 +591,11 @@ public struct Reach: Hashable, Sendable {
 - `SpaceIndex`, the type that opens a database, is internal to `ElenathCore`. The app and Nano bot can only
   ask `Retrieval`.
 - `Retrieval` takes a `Workplace`, never a `Reach`: it builds the reach itself from the spaces as they are
-  now, so a caller can't hand it a wider one. Queries about one note (`backlinks`, `resolve`) take the note
-  and use its own container as the workplace.
+  now, so a caller can't hand it a wider one. **Every query takes the workplace it is asked from**, also the
+  queries about one note (`backlinks`, `resolve`, `note`, `linkContext` …): asked about a note in a container
+  the workplace may not read, they answer with nothing, so a caller that passes the wrong note can't reach
+  across a seal. Views that show a container ask from that container's workplace
+  (`Reach.workplace(of:)`); anything that builds content for somewhere else asks from there.
 - **Reading a note for anything other than showing it to the user** (related notes, a summary, anything put
   in front of the model) goes through `Retrieval.text(of:from:)`, which gives nothing for a note outside the
   workplace's reach. `NoteStore` and `LibraryCatalog` are for the editor and the sidebar, which show the user
@@ -541,21 +607,22 @@ public actor Retrieval {
 
     public func search(_ query: SearchQuery, from workplace: Workplace) async throws -> [SearchHit]
     public func titles(matching text: String, from workplace: Workplace, limit: Int) async throws -> [TitleHit]
-    public func resolve(_ link: WikiLink, from source: NoteRef) async throws -> LinkResolution
-    public func backlinks(to note: NoteRef) async throws -> [Backlink]
+    public func resolve(_ link: WikiLink, in source: NoteRef, from workplace: Workplace) async throws -> LinkResolution
+    public func backlinks(to note: NoteRef, from workplace: Workplace) async throws -> [Backlink]
     public func tags(from workplace: Workplace) async throws -> [TagCount]
     public func notes(tagged tag: String, from workplace: Workplace) async throws -> [NoteHit]
     public func openTasks(from workplace: Workplace, limit: Int) async throws -> [TaskHit]
     public func recentNotes(from workplace: Workplace, limit: Int) async throws -> [NoteHit]
-    public func linkingNotes(to note: NoteRef) async throws -> [NoteRef]     // for LinkRewriter
-    public func linkingNotes(toMoved moves: [NoteMove]) async throws -> [NoteRef]  // after a rename in Finder
+    public func linkingNotes(to note: NoteRef, from workplace: Workplace) async throws -> [NoteRef]  // LinkRewriter
+    public func linkingNotes(toMoved moves: [NoteMove], from workplace: Workplace) async throws -> [NoteRef]
     public func notesLinking(throughFolderNamed name: String, from workplace: Workplace) async throws -> [NoteRef]
-    public func linkContext(for container: Container) async throws -> LinkContext  // resolve many links at once
-    public func attachmentNamesShared(by note: NoteRef) async throws -> Set<String>
-    public func notes(in folder: ItemPath, of container: Container) async throws -> [NoteHit]
+    public func linkContext(for container: Container, from workplace: Workplace) async throws -> LinkContext
+    public func attachmentNamesShared(by note: NoteRef, from workplace: Workplace) async throws -> Set<String>
+    public func notes(in folder: ItemPath, of container: Container, from workplace: Workplace) async throws
+        -> [NoteHit]
     public func folders(of container: Container, from workplace: Workplace) async throws -> [ItemPath]
-    public func note(_ note: NoteRef) async throws -> NoteHit?
-    public func hasDuplicatedIdentity(_ note: NoteRef) async throws -> Bool
+    public func note(_ note: NoteRef, from workplace: Workplace) async throws -> NoteHit?
+    public func hasDuplicatedIdentity(_ note: NoteRef, from workplace: Workplace) async throws -> Bool
     public func text(of note: NoteRef, from workplace: Workplace) async throws -> String?   // nil outside the reach
     public func inboxCount() async throws -> Int                             // a number, never content
     public func filingDestinations() async -> [FilingDestination]
@@ -582,6 +649,11 @@ public struct SearchHit: Hashable, Sendable {
 - **Keyword search** is FTS5 with `unicode61 remove_diacritics 2`: every term must match, the last term as a
   prefix (search as you type), titles weighted above text, newer notes first on a tie. A second table with
   the `trigram` tokenizer serves text written without spaces between words.
+- **Search terms** (`SearchTerms`): words split at whitespace, without quotes and control characters, at most
+  32 of them (a thousand would be more than SQLite takes). A last word of one character is matched as a whole
+  word, not as a prefix, which would read nearly every note; one or two letters of a script with spaces
+  aren't looked for inside words. Scripts without spaces are looked for inside text at any length.
+- **Text is bound and read by its length in bytes**, so a NUL inside a note doesn't cut it short.
 - Results from several databases are merged by rank, then by date.
 - **Leak tests** (`SealingLeakTests`) plant one marker word in a sealed space (title, text, tag, task, file
   name, folder name) and another in an unsealed one. For every query of `Retrieval` and every workplace, the
@@ -605,6 +677,11 @@ public actor Indexer {
   moved.
 - Each database records its schema version; a different one means the database is dropped and rebuilt.
 - One writer (the indexer) and many readers per database (WAL mode).
+- **A damaged database** (`SQLITE_CORRUPT`, `SQLITE_NOTADB`) is thrown away, with its `-wal` and `-shm`, and
+  the container is indexed again from its folder. A database that can't be opened is left out of queries, so
+  one damaged space doesn't empty every search; `Retrieval` lets go of a database file that was replaced.
+- **Big notes:** the index reads at most a note's first `NoteLimits.maximumIndexedBytes` (4 MB), cut where no
+  character is split, and records the file's real size, so the next pass sees nothing changed.
 
 ## Capture (`ElenathCore/Capture`): built
 
@@ -668,6 +745,15 @@ public enum ChatExport {
 
 - Everything is **copied**. Originals are never moved or changed.
 - A converted document keeps its original: it is copied to `Attachments` and linked from the top of the note.
+- **Web pages and web archives** are read by `HTMLText`, never by WebKit: headings, paragraphs, lists,
+  quotes, line breaks and `<pre>` as a fenced block; scripts, styles and the page's head are left out, and
+  nothing is fetched. The app reads other documents with AppKit as the type their extension names, so AppKit
+  never guesses a file is a web page. All of it runs off the main thread.
+- **Links, named pipes and devices** in a dropped folder are skipped; a copied folder never holds a link.
+- **A vault's own `Attachments` folder** (Obsidian keeps one) is merged into Elenath's `Attachments` beside
+  the notes, where embeds find it.
+- **A chat's attachment names** come from the chat's text, so a name is used only when it is a regular file
+  right in the export's folder: never a path, a hidden name, a folder, a link or a pipe.
 - A chat export is a chat with oneself: every message is a note to file. Its notes go where it was dropped
   (usually the Inbox), each with `created` set to when it was sent, and its photos and files in `Attachments`.
 - Folders keep their structure. Clashes get Finder-style numbers. Cancelling leaves what is already done.

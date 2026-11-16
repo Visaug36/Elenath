@@ -212,9 +212,11 @@ extension AppModel {
                 default: components.append(String(part))
                 }
             }
+            // A file only: not a folder, a link or a named pipe.
             guard let path = ItemPath(components.joined(separator: "/")),
                 let url = try? await services.catalog.url(for: path, in: note.container, isDirectory: false),
-                FileManager.default.fileExists(atPath: url.path)
+                let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                attributes[.type] as? FileAttributeType == .typeRegular
             else { return nil }
             return url
         }

@@ -73,6 +73,11 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case reservedName(String)
     /// The path doesn't name a note file.
     case notANote
+    /// The note is larger than Elenath opens (`NoteLimits.maximumOpenedBytes`).
+    case tooLarge
+    /// What was moved to the Trash can't be reached there any more: it was emptied, or (in the App
+    /// Sandbox) Elenath may not take things back out of it. Finder's Put Back still can.
+    case cannotPutBack(String)
 }
 
 /// Reads and writes the notes, folders and attachments of a library (docs/ARCHITECTURE.md, "Notes").
@@ -109,6 +114,7 @@ public actor NoteStore {
     public func read(_ ref: NoteRef) async throws -> LoadedNote {
         let url = try await noteURL(ref)
         guard let info = fileSystem.info(at: url), !info.isDirectory else { throw NoteStoreError.notFound }
+        guard info.byteCount <= NoteLimits.maximumOpenedBytes else { throw NoteStoreError.tooLarge }
         let data = try fileSystem.readData(at: url)
         return loaded(ref, data: data, info: info, containerIsReadOnly: await catalog.isReadOnly(ref.container))
     }
@@ -327,7 +333,7 @@ public actor NoteStore {
     public func restore(from trashed: URL, to path: ItemPath, in container: Container) async throws -> ItemPath {
         guard !path.isRoot else { throw NoteStoreError.notFound }
         let folderURL = try await writableFolderURL(path.folder, in: container)
-        guard fileSystem.info(at: trashed) != nil else { throw NoteStoreError.notFound }
+        guard fileSystem.info(at: trashed) != nil else { throw NoteStoreError.cannotPutBack(path.name) }
         try fileSystem.createDirectory(at: folderURL)
         let name = availableNoteName(for: path.name, in: folderURL)
         guard let restored = path.folder.appending(name) else { throw NoteStoreError.notFound }
@@ -377,11 +383,22 @@ public actor NoteStore {
     public func addAttachments(
         _ sources: [URL], to ref: NoteRef, progress: @escaping @Sendable (FileCopyProgress) -> Void = { _ in }
     ) async throws -> [ItemPath] {
-        try await requireWritable(ref.container)
-        guard let attachments = ref.path.folder.appending(NameSanitizer.attachmentsFolderName) else {
+        try await importAttachments(sources, into: ref.path.folder, container: ref.container, progress: progress)
+    }
+
+    /// Copies files into the `Attachments` folder of the notes in `folder`: also what the attachments
+    /// folder of an imported vault becomes (Obsidian keeps one). Returns where the copies are, in the
+    /// order of `sources`. Never brings back a space's folder, or the library's, that is gone.
+    public func importAttachments(
+        _ sources: [URL], into folder: ItemPath, container: Container,
+        progress: @escaping @Sendable (FileCopyProgress) -> Void = { _ in }
+    ) async throws -> [ItemPath] {
+        try await requireWritable(container)
+        guard let attachments = folder.appending(NameSanitizer.attachmentsFolderName) else {
             throw NoteStoreError.notANote
         }
-        let folderURL = try await catalog.url(for: attachments, in: ref.container, isDirectory: true)
+        let folderURL = try await catalog.url(for: attachments, in: container, isDirectory: true)
+        try await requireContainerFolder(container)
         try fileSystem.createDirectory(at: folderURL)
         let copies = try await FileCopier.copy(
             sources, into: folderURL, root: catalog.root, fileSystem: fileSystem, progress: progress)
@@ -414,7 +431,7 @@ public actor NoteStore {
         for components in places {
             guard let path = ItemPath(components.joined(separator: "/")),
                 let url = try? await catalog.url(for: path, in: ref.container, isDirectory: false),
-                let info = fileSystem.info(at: url), !info.isDirectory
+                let info = fileSystem.info(at: url), !info.isDirectory, !info.isSpecial
             else { continue }
             return url
         }

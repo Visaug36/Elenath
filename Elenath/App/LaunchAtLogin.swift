@@ -47,9 +47,13 @@ enum LaunchAtLogin {
                 try service.unregister()
             }
         } catch {
+            // The error's domain and code are safe to read in a report; its description may name a path.
             let action = on ? "register" : "unregister"
+            let code = (error as NSError).code
+            let domain = (error as NSError).domain
             logger.error(
-                "Could not \(action, privacy: .public) the login item: \(error.localizedDescription, privacy: .public)")
+                "Could not \(action, privacy: .public) the login item (\(domain, privacy: .public) \(code, privacy: .public)): \(error.localizedDescription, privacy: .private)"
+            )
             throw error
         }
     }

@@ -3,6 +3,9 @@ name: Screenshots
 # Builds Elenath, takes screenshots from the -demo build on a real macOS runner, and commits them to
 # docs/images on the branch it ran on, so every phase's pull request shows what the app looks like.
 # Run it by hand from the Actions tab after visual changes.
+#
+# The screenshots are taken with a read-only token. Only the last job, which runs none of the project's
+# code and installs nothing, can push. Actions are pinned to the commit of a release.
 
 on:
   workflow_dispatch:
@@ -17,7 +20,7 @@ on:
       - ".github/workflows/screenshots.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 # A newer push makes an older run's images stale.
 concurrency:
@@ -32,11 +35,12 @@ jobs:
     name: Take screenshots
     runs-on: macos-26
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history, so the commit step can rebase onto a branch that moved on.
-          fetch-depth: 0
+          persist-credentials: false
 
       - name: Select Xcode
         run: |
@@ -69,9 +73,12 @@ jobs:
       - name: Capture
         run: scripts/screenshots/capture.sh build/DerivedData/Build/Products/Release/Elenath.app docs/images
 
+      - name: Keep images that differ only by rendering noise
+        run: scripts/screenshots/keep-unchanged.sh docs/images
+
       - name: Upload
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screenshots
           path: |
@@ -80,12 +87,37 @@ jobs:
             build/screenshot-logs
           if-no-files-found: ignore
 
+  commit:
+    name: Commit screenshots
+    needs: screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so the commit can be rebased onto a branch that moved on.
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: screenshots
+          path: build/screenshots
+
       - name: Commit screenshots
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          # The artifact keeps the images under docs/images, or at its top when there were no logs beside them.
+          images=(build/screenshots/docs/images/*.png build/screenshots/*.png)
+          if [[ ${#images[@]} -eq 0 ]]; then
+            echo "No screenshots to commit."
+            exit 0
+          fi
+          cp "${images[@]}" docs/images/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          scripts/screenshots/keep-unchanged.sh docs/images
           git add docs/images/*.png
           if git diff --cached --quiet; then
             echo "Screenshots unchanged."

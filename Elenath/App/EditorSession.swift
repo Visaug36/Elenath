@@ -14,26 +14,28 @@ enum EditorBanner: Equatable {
     case saveFailed(String)
     /// The file was moved or deleted outside Elenath.
     case missing
+    /// The note is larger than Elenath opens (`NoteLimits.maximumOpenedBytes`): nothing of it is shown.
+    case tooLarge
 }
 
 /// What closing a note had to do with edits it couldn't save where the note was.
 enum EditorSessionNotice: Error, LocalizedError {
-    /// The file was gone, so the edits became a note of their own in the Inbox.
-    case rescued(title: String, copy: String)
+    /// The file was gone, so the edits became a note of their own, in `place`.
+    case rescued(title: String, copy: String, place: String)
     /// Nothing could be written to the library: the text is in Elenath's Recovery folder.
     case keptInRecovery(title: String)
 
     var errorDescription: String? {
         switch self {
-        case .rescued(let title, let copy):
+        case .rescued(let title, let copy, let place):
             String(
                 localized:
-                    "“\(title)” was moved or deleted outside Elenath while it had unsaved edits. They are in the Inbox as “\(copy)”."
+                    "“\(title)” was moved or deleted outside Elenath while it had unsaved edits. They are in “\(place)” as “\(copy)”."
             )
         case .keptInRecovery(let title):
             String(
                 localized:
-                    "Elenath couldn't save “\(title)”. Its text is kept, and Elenath offers to put it in the Inbox the next time the library opens."
+                    "Elenath couldn't save “\(title)”. Its text is kept, and Elenath offers to put it back the next time the library opens."
             )
         }
     }
@@ -121,6 +123,11 @@ final class EditorSession {
             isLoading = false
             isDetached = true
             banner = .missing
+        } catch NoteStoreError.tooLarge {
+            // Nothing is shown and nothing can be typed, so nothing is ever written over the file.
+            isLoading = false
+            isReadOnly = true
+            banner = .tooLarge
         } catch {
             isLoading = false
             model?.report(error)
@@ -149,7 +156,7 @@ final class EditorSession {
             banner = .notUTF8
         } else if isReadOnly {
             banner = .readOnly
-        } else if banner == .readOnly || banner == .notUTF8 || banner == .missing {
+        } else if banner == .readOnly || banner == .notUTF8 || banner == .missing || banner == .tooLarge {
             banner = nil
         }
     }
@@ -254,8 +261,8 @@ final class EditorSession {
     }
 
     /// Waits for Elenath's steps to finish with the note, saves what is left, and makes sure no edit is
-    /// dropped: edits to a file that is gone become a note in the Inbox, and edits that can't be saved
-    /// go to Recovery (offered at the next launch). When `tellsUser`, an alert says where the edits
+    /// dropped: edits to a file that is gone become a note of their own (`rescueEdits`), and edits that
+    /// can't be saved go to Recovery (offered at the next launch). When `tellsUser`, an alert says where the edits
     /// went. Used when the note closes and (without the alert) when the app quits.
     func saveEverything(tellsUser: Bool) async {
         while holds > 0 {
@@ -356,54 +363,56 @@ final class EditorSession {
     }
 
     /// Puts text that couldn't be saved into Elenath's own Recovery folder, so it survives even if the app
-    /// is quit before the library can be written again. The name has the time, so copies don't replace
-    /// one another; the next time the library opens, Elenath offers to put them in the Inbox.
+    /// is quit before the library can be written again. Each copy is kept under a name of its own, with
+    /// the space it came from (`RecoveryFolder`); the next time the library opens, Elenath offers to put
+    /// them back.
     private func keepRecoveryCopy(of edited: NoteText) async {
         guard let services, let libraryID = model?.libraryID else { return }
-        let folder = services.support.recovery.appending(
-            component: libraryID.rawValue.uuidString, directoryHint: .isDirectory)
-        let name = NameSanitizer.sanitizedTitle("\(ref.title) \(EditorSession.recoveryStamp())") + ".md"
+        let recovery = RecoveryFolder(
+            folder: services.support.recovery.appending(
+                component: libraryID.rawValue.uuidString, directoryHint: .isDirectory),
+            fileSystem: LocalFileSystem())
+        let title = ref.title
+        let container = ref.container
         let data = edited.data()
         await Task.detached(priority: .utility) {
-            let fileSystem = LocalFileSystem()
             do {
-                try fileSystem.createDirectory(at: folder)
-                try fileSystem.writeAtomically(
-                    data, to: folder.appending(component: name, directoryHint: .notDirectory))
+                try recovery.keep(data, title: title, from: container, now: .now, timeZone: .current)
             } catch {
                 EditorSession.log.error("Could not keep a recovery copy", private: String(describing: error))
             }
         }.value
     }
 
-    /// "2026-11-10 14.30.05", for the names of recovery copies.
-    private nonisolated static func recoveryStamp() -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        return formatter.string(from: .now)
-    }
-
-    /// The file is gone and the note is closing with unsaved edits: they become a note of their own in
-    /// the Inbox, named like a conflict copy, and the user is told. If that can't be written either,
-    /// they go to Recovery.
+    /// The file is gone and the note is closing with unsaved edits: they become a note of their own, named
+    /// like a conflict copy, and the user is told where. It goes where the note was (its folder is made
+    /// again if it was deleted), as long as the note's space is there. The Inbox takes it only from a
+    /// space that mixes: a sealed space's text never leaves the space, so when the space is gone it goes
+    /// to Recovery, like edits that can't be written anywhere.
     private func rescueEdits(tellsUser: Bool) async {
         guard let services else { return }
         let title = NameSanitizer.conflictTitle(for: ref.title, now: .now, timeZone: .current)
-        do {
-            let copy = try await services.notes.create(
-                title: title, in: .root, container: .inbox, kind: kind, body: bodyToShow)
+        var places = [(container: ref.container, folder: ref.path.folder)]
+        if case .space = ref.container, model?.space(of: ref.container)?.isSealed == false {
+            places.append((.inbox, .root))
+        }
+        for place in places {
+            guard
+                let copy = try? await services.notes.create(
+                    title: title, in: place.folder, container: place.container, kind: kind, body: bodyToShow)
+            else { continue }
             isDirty = false
             if tellsUser {
-                model?.report(EditorSessionNotice.rescued(title: ref.title, copy: copy.ref.title))
+                let placeName = model?.placeName(place.container, place.folder) ?? ""
+                model?.report(EditorSessionNotice.rescued(title: ref.title, copy: copy.ref.title, place: placeName))
             }
             await model?.noteChanged([copy.ref])
-        } catch {
-            await keepRecoveryCopy(of: editedText())
-            isDirty = false
-            if tellsUser {
-                model?.report(EditorSessionNotice.keptInRecovery(title: ref.title))
-            }
+            return
+        }
+        await keepRecoveryCopy(of: editedText())
+        isDirty = false
+        if tellsUser {
+            model?.report(EditorSessionNotice.keptInRecovery(title: ref.title))
         }
     }
 

@@ -94,6 +94,21 @@ public actor Importer {
             case .skipped(let source, _):
                 report.skipped.append(source)
                 continue
+            case .folder(let name, let children)
+            where NameSanitizer.key(name) == NameSanitizer.key(NameSanitizer.attachmentsFolderName):
+                // A vault's attachments folder (Obsidian keeps one): its files go into the Attachments folder
+                // of the notes beside it, where Elenath looks for them.
+                let sources = Importer.files(in: children)
+                do {
+                    report.files += try await noteStore.importAttachments(sources, into: folder, container: container)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    report.failed.append(.init(source: URL(fileURLWithPath: name), message: String(describing: error)))
+                }
+                state.completed += sources.count
+                progress(state)
+                continue
             case .folder(let name, let children):
                 do {
                     let created = try await noteStore.createFolder(named: name, in: folder, container: container)
@@ -192,6 +207,17 @@ public actor Importer {
                 _ = try await noteStore.save(noteText, to: note.ref, expecting: note.stamp)
             }
             report.notes.append(note.ref)
+        }
+    }
+
+    /// Every file a plan names, in folders too, as it is: for a vault's attachments folder.
+    static func files(in items: [ImportItem]) -> [URL] {
+        items.flatMap { item -> [URL] in
+            switch item {
+            case .folder(_, let children): files(in: children)
+            case .skipped: []
+            default: item.source.map { [$0] } ?? []
+            }
         }
     }
 

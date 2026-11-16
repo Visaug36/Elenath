@@ -89,9 +89,12 @@ public enum ImportPlanner {
             if fileExtension == "txt", isChat(url, fileSystem: fileSystem) {
                 return .chatExport(source: url)
             }
+            // Text too large to open as a note is kept as a file (`NoteLimits`).
+            guard info.byteCount <= NoteLimits.maximumImportedNoteBytes else { return .file(source: url) }
             return .note(source: url, title: title)
         }
         if documentExtensions.contains(fileExtension) {
+            guard info.byteCount <= NoteLimits.maximumConvertedDocumentBytes else { return .file(source: url) }
             return .document(source: url, title: title)
         }
         return .file(source: url)

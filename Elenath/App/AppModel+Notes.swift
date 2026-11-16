@@ -190,14 +190,15 @@ extension AppModel {
         }
     }
 
-    /// Opens a file that isn't a note in the app the Mac uses for it.
+    /// Opens a file that isn't a note in the app the Mac uses for it, asking first about anything that
+    /// could run as a program (`openLibraryFile`).
     func openFile(_ path: ItemPath, in container: Container) {
         guard let services else { return }
         Task {
             guard let url = try? await services.catalog.url(for: path, in: container, isDirectory: false) else {
                 return
             }
-            NSWorkspace.shared.open(url)
+            openLibraryFile(url)
         }
     }
 

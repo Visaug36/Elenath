@@ -125,7 +125,7 @@ final class AppModel {
     @ObservationIgnored var ownChanges: [OwnChange] = []
     /// Edits that couldn't be saved before Elenath last closed, kept in its Recovery folder: an alert offers
     /// to put them in the Inbox.
-    var recoveredEdits: [URL] = []
+    var recoveredEdits: [RecoveryFolder.Copy] = []
     /// How many of Elenath's own steps are running. The watcher's changes wait for them, so a rename
     /// Elenath made is never taken for one made in Finder.
     @ObservationIgnored var stepsInFlight = 0

@@ -171,6 +171,12 @@ public actor Indexer {
         return index
     }
 
+    /// A note's bytes, at most `NoteLimits.maximumIndexedBytes` of them, without a character cut in half.
+    private static func readBeginning(of url: URL, fileSystem: any FileSystem) throws -> Data {
+        let data = try fileSystem.readData(at: url, upTo: NoteLimits.maximumIndexedBytes)
+        return data.count < NoteLimits.maximumIndexedBytes ? data : NoteLimits.droppingSplitCharacter(data)
+    }
+
     private func waitWhilePaused() async throws {
         while isPaused {
             try await Task.sleep(for: .milliseconds(200))
@@ -242,7 +248,7 @@ public actor Indexer {
             try index.transaction {
                 for (entry, existing) in chunk {
                     let url = entry.path.url(under: base, isDirectory: false)
-                    guard let data = try? fileSystem.readData(at: url) else { continue }
+                    guard let data = try? Indexer.readBeginning(of: url, fileSystem: fileSystem) else { continue }
                     let record = NoteRecord(
                         path: entry.path, data: data, info: fileSystem.info(at: url), timeZone: timeZone())
                     if let existing {
@@ -295,7 +301,7 @@ public actor Indexer {
             for (path, url) in urls {
                 let existing = known[NameSanitizer.key(path.description)]
                 guard let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial,
-                    let data = try? fileSystem.readData(at: url)
+                    let data = try? Indexer.readBeginning(of: url, fileSystem: fileSystem)
                 else {
                     if let existing {
                         try index.remove(rowID: existing.rowID)

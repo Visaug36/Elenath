@@ -5,22 +5,35 @@ import Foundation
 /// Reads a rich-text or Word document with AppKit and writes its text as Markdown: headings by their
 /// size, bold and italic, and list paragraphs as they are. It is a plain reading, not a faithful
 /// conversion, which is why the original is kept beside the note.
+///
+/// Web pages and web archives are read by `HTMLText`, never by WebKit: an imported page runs no script
+/// and asks for nothing over the network. Every other kind is read as the type its extension names, so
+/// AppKit never guesses a file is a web page. All of it runs off the main thread.
 struct DocumentConverter: DocumentConverting {
     func markdown(from url: URL) throws -> String {
         let fileExtension = url.pathExtension.lowercased()
-        if ["html", "htm", "webarchive"].contains(fileExtension) {
-            // AppKit reads HTML with WebKit, which only works on the main thread.
-            return try DispatchQueue.main.sync {
-                try DocumentConverter.convert(url)
+        switch fileExtension {
+        case "html", "htm":
+            return HTMLText.markdown(fromHTML: try Data(contentsOf: url))
+        case "webarchive":
+            guard let text = HTMLText.markdown(fromWebArchive: try Data(contentsOf: url)) else {
+                throw CocoaError(.fileReadCorruptFile)
             }
+            return text
+        default:
+            guard let type = DocumentConverter.types[fileExtension] else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            let document = try NSAttributedString(
+                url: url, options: [.documentType: type], documentAttributes: nil)
+            return DocumentConverter.markdown(from: document)
         }
-        return try DocumentConverter.convert(url)
     }
 
-    private static func convert(_ url: URL) throws -> String {
-        let document = try NSAttributedString(url: url, options: [:], documentAttributes: nil)
-        return markdown(from: document)
-    }
+    /// What AppKit reads each kind of document as.
+    private static let types: [String: NSAttributedString.DocumentType] = [
+        "rtf": .rtf, "rtfd": .rtfd, "doc": .docFormat, "docx": .officeOpenXML, "odt": .openDocument,
+    ]
 
     /// The text of an attributed string, paragraph by paragraph.
     static func markdown(from document: NSAttributedString) -> String {

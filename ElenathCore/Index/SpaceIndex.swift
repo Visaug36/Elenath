@@ -49,7 +49,8 @@ struct NoteRecord: Sendable {
         kind = text?.kind ?? .note
         created = text?.frontMatter?.created(in: timeZone) ?? info?.created
         modified = info?.modified
-        byteCount = Int64(data.count)
+        // The file's size, also when only its beginning was read (`NoteLimits.maximumIndexedBytes`).
+        byteCount = info?.byteCount ?? Int64(data.count)
         contentHash = ContentHash.of(data)
         identity = info?.identity
 

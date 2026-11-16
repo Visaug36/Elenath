@@ -238,7 +238,7 @@ final class NoteTextView: NSTextView {
             guard glyphs.length > 0 else { return }
             let lastGlyph = NSMaxRange(glyphs) - 1
             let used = layoutManager.lineFragmentUsedRect(forGlyphAt: lastGlyph, effectiveRange: nil)
-            let size = Self.drawnSize(of: image, key: key, columnWidth: textContainer?.size.width ?? 0)
+            let size = Self.drawnSize(of: image.size, key: key, columnWidth: textContainer?.size.width ?? 0)
             let frame = NSRect(x: origin.x, y: origin.y + used.maxY + 8, width: size.width, height: size.height)
             NSGraphicsContext.saveGraphicsState()
             NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6).addClip()
@@ -249,8 +249,7 @@ final class NoteTextView: NSTextView {
 
     /// The size a picture is drawn at: its own size, or the width the embed asks for, never wider than
     /// the column and never taller than 480 pt.
-    static func drawnSize(of image: NSImage, key: EmbedKey, columnWidth: CGFloat) -> NSSize {
-        let natural = image.size
+    static func drawnSize(of natural: NSSize, key: EmbedKey, columnWidth: CGFloat) -> NSSize {
         guard natural.width > 0, natural.height > 0 else { return .zero }
         var width = min(key.width ?? natural.width, columnWidth)
         var height = width * natural.height / natural.width

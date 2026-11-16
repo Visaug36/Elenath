@@ -21,6 +21,7 @@ final class DemoSelfCheck {
     init(model: AppModel, settings: AppSettings) {
         self.model = model
         self.settings = settings
+        EditorCoordinator.showsCompletionList = false
         // NSApp may not exist yet while the App is being initialized.
         Task { @MainActor [weak self] in
             await self?.run()
@@ -118,6 +119,14 @@ final class DemoSelfCheck {
             textView.insertText(piece, replacementRange: textView.selectedRange())
             try await settle(seconds: 0.2)
         }
+        // What "[[" offers, without the list's own loop, which waits for a keyboard the runner hasn't got.
+        textView.insertText("\n[[Lec", replacementRange: textView.selectedRange())
+        try await settle(seconds: 0.5)
+        let offered =
+            textView.delegate?.textView?(
+                textView, completions: [], forPartialWordRange: textView.rangeForUserCompletion,
+                indexOfSelectedItem: nil) ?? []
+        try check(!offered.isEmpty, "\"[[Lec\" offered no notes")
         // Autosave, then the save when the note closes.
         try await settle(seconds: 1)
         model.go(to: .today)
@@ -210,6 +219,20 @@ final class DemoSelfCheck {
             model.open(note)
             try await settle(seconds: 0.2)
         }
+        // A note too large to open, put in the Inbox behind Elenath's back, opens with a banner and
+        // nothing that could be typed over it.
+        guard let inbox = model.url(for: .root, in: .inbox, isDirectory: true) else {
+            throw Failure(description: "the Inbox has no folder")
+        }
+        let huge = inbox.appending(component: "Grew too large.md", directoryHint: .notDirectory)
+        try Data("# Grew too large\n".utf8).write(to: huge)
+        let handle = try FileHandle(forWritingTo: huge)
+        try handle.truncate(atOffset: UInt64(NoteLimits.maximumOpenedBytes + 1))
+        try handle.close()
+        let hugeNote = NoteRef(container: .inbox, path: ItemPath("Grew too large.md")!)
+        model.open(hugeNote)
+        try await waitFor("the too-large banner", seconds: 10) { self.model.session?.banner == .tooLarge }
+        try check(model.session?.isReadOnly == true, "a note too large to open could be edited")
         model.go(to: .today)
         try await settle()
     }
@@ -392,9 +415,28 @@ enum HostileFiles {
             try writeData(name, Data(text.utf8))
         }
         try writeText("Plain note.md", "A plain note with a [[link]] and a #tag.\n")
-        // Two megabytes of links, tags and tasks.
+        // Two megabytes of links, tags and tasks: still styled. Three megabytes: shown as plain text.
         try writeText(
             "Huge note.md", String(repeating: "Some text [[Link]] #tag - [ ] task `code` **bold**\n", count: 40_000))
+        try writeText(
+            "Plain huge note.md",
+            String(repeating: "Some text [[Link]] #tag - [ ] task `code` **bold**\n", count: 60_000))
+        // Larger than a note can be: imported as a file. A hole in the file, so it takes no room.
+        let tooLarge = folder.appending(component: "Too large to be a note.md", directoryHint: .notDirectory)
+        try writeText(tooLarge.lastPathComponent, "# Too large\n")
+        let handle = try FileHandle(forWritingTo: tooLarge)
+        try handle.truncate(atOffset: UInt64(NoteLimits.maximumOpenedBytes + 1))
+        try handle.close()
+        // A named pipe: reading it would wait forever, so it is never read.
+        guard mkfifo(folder.appending(component: "Pipe.md").path, 0o644) == 0 else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        // Embeds of a picture that claims to be enormous, a damaged PDF, a missing file, a folder and a
+        // picture on the web.
+        try writeText(
+            "Embeds.md",
+            "![[Enormous.png]]\n![[Garbage.pdf]]\n![[Missing.png]]\n![[Deep]]\n![[Pipe.md]]\n"
+                + "![remote](https://example.invalid/x.png)\n![[Enormous.png|300]]\n")
         try writeText("One long line.md", String(repeating: "word ", count: 300_000))
         try writeText(
             "Unclosed.md", "```\nnever closed\n[[also never closed\n> quote\n" + String(repeating: "[", count: 10_000))

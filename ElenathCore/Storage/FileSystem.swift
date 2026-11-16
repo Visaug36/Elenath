@@ -14,6 +14,8 @@ public protocol FileSystem: Sendable {
     /// Creates a folder and any missing parents. Succeeds if the folder already exists.
     func createDirectory(at url: URL) throws
     func readData(at url: URL) throws -> Data
+    /// At most the first `maximumByteCount` bytes of a regular file, without reading the rest.
+    func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data
     /// Writes to a temporary file first and then renames it over `url`, so readers see either the old
     /// or the new contents, never a half-written file.
     func writeAtomically(_ data: Data, to url: URL) throws
@@ -34,6 +36,14 @@ public protocol FileSystem: Sendable {
     func modificationDate(at url: URL) -> Date?
     /// What is at `url`, without following a symbolic link there. Nil when nothing is.
     func info(at url: URL) -> FileInfo?
+}
+
+extension FileSystem {
+    /// Reads the whole file and keeps its beginning: for file systems in tests. `LocalFileSystem` reads
+    /// only what is asked for.
+    public func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data {
+        try readData(at: url).prefix(maximumByteCount)
+    }
 }
 
 /// What identifies a file on its volume. It survives a rename or a move within the volume, so Elenath can
@@ -114,6 +124,16 @@ public struct LocalFileSystem: FileSystem {
             throw CocoaError(.fileReadUnknown, userInfo: [NSURLErrorKey: url])
         }
         return try Data(contentsOf: url)
+    }
+
+    public func readData(at url: URL, upTo maximumByteCount: Int) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw CocoaError(.fileReadUnknown, userInfo: [NSURLErrorKey: url])
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        return try handle.read(upToCount: maximumByteCount) ?? Data()
     }
 
     public func writeAtomically(_ data: Data, to url: URL) throws {

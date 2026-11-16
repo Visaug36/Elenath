@@ -22,7 +22,9 @@ jobs:
       # Newest stable Xcode with this major version on the runner (see CLAUDE.md).
       XCODE_MAJOR: "26"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |
@@ -128,7 +130,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results
           path: |
@@ -145,7 +147,9 @@ jobs:
     env:
       XCODE_MAJOR: "26"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |
@@ -164,7 +168,7 @@ jobs:
 
       - name: Upload the self-check's log
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: selfcheck
           path: build/selfcheck
@@ -179,7 +183,9 @@ jobs:
     env:
       XCODE_MAJOR: "27"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: |

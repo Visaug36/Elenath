@@ -13,6 +13,9 @@ name: Release
 #   notes added to it.
 #
 # The build is arm64 and ad-hoc signed (see docs/RELEASE_CHECKLIST.md).
+#
+# Only the last job, which runs none of the project's code, can write to the repository: the build runs with
+# a read-only token. Actions are pinned to the commit of a release.
 
 on:
   push:
@@ -34,7 +37,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 # One release at a time; a second push waits for the first to finish.
 concurrency:
@@ -56,7 +59,9 @@ jobs:
       existing: ${{ steps.plan.outputs.existing }}
       ref: ${{ steps.plan.outputs.ref }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Read the version and decide
         id: plan
@@ -119,20 +124,27 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Version $version: publish=$publish prerelease=$prerelease existing=$existing ref=$ref"
 
-  release:
-    name: Build and publish
+  build:
+    name: Build
     needs: plan
     if: needs.plan.outputs.publish == 'true'
     runs-on: macos-26
     timeout-minutes: 45
+    permissions:
+      contents: read
     env:
       VERSION: ${{ needs.plan.outputs.version }}
-      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
-      EXISTING: ${{ needs.plan.outputs.existing }}
+    outputs:
+      commit: ${{ steps.commit.outputs.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+
+      - name: Commit being built
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Select Xcode
         run: |
@@ -191,12 +203,43 @@ jobs:
           } >> build/release/notes.md
           cat build/release/notes.md
 
+      - name: Keep the release files for publishing
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: |
+            build/release/*.zip
+            build/release/*.zip.sha256
+            build/release/notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      EXISTING: ${{ needs.plan.outputs.existing }}
+      COMMIT: ${{ needs.build.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: build/release
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          zip="${{ steps.package.outputs.zip }}"
+          zip="build/release/Elenath-$VERSION.zip"
+          (cd build/release && sha256sum -c "Elenath-$VERSION.zip.sha256")
           if [[ "$EXISTING" == "true" ]]; then
             # Published by hand on the Releases page, which made the tag: add the build and the notes to it.
             gh release upload "v$VERSION" "$zip" "$zip.sha256" --clobber
@@ -209,7 +252,7 @@ jobs:
           fi
           # Creates the tag v$VERSION on the commit that was built.
           gh release create "v$VERSION" "$zip" "$zip.sha256" \
-            --target "$(git rev-parse HEAD)" \
+            --target "$COMMIT" \
             --title "Elenath $VERSION" \
             --notes-file build/release/notes.md \
             $prerelease_flag

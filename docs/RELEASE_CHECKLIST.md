@@ -85,6 +85,11 @@ with the reason it stays. Cover at least:
 - [ ] Importing an Obsidian vault: its `Attachments` folder arrives, and the pictures its notes embed show.
 - [ ] A note of a sealed space deleted in Finder while it has unsaved edits: on closing, the edits are a
       conflict copy in that space, never in the Inbox.
+- [ ] Move a note of your library to the Trash, then ⌘Z: it comes back. (CI's runner showed this for a
+      library inside Elenath's own container; a library in Documents may behave differently in the sandbox.
+      If Elenath says to use Finder's Put Back instead, that's the known fallback; report it.)
+- [ ] Rename a note in its title field, move it with drag and drop, then ⌘Z twice: it goes back, then gets
+      its old name back, one step at a time.
 
 ## 5. Only a real Mac can tell
 

@@ -49,6 +49,12 @@ where it was unsafe.
   and a banner offers another app. Search reads the first 4 MB of any note.
 - Recovery copies of a note with a long title could replace each other. Each now keeps a name of its own.
 - Importing an Obsidian vault failed on its own `Attachments` folder; it is now merged into Elenath's.
+- Undo could fail with "That file isn't there any more" when several changes were undone together or ⌘Z was
+  pressed again quickly: changes now run one after another, each is undone on its own, and an undo that
+  fails no longer leads to more errors.
+- Renaming or moving a note while its title was being edited could rename it back when the title lost focus.
+- Undoing a move to the Trash now explains how to use Finder's Put Back if Elenath can't take the item back
+  itself.
 
 ### Added
 

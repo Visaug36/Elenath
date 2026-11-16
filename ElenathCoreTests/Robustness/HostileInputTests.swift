@@ -58,21 +58,29 @@ struct HostileInputTests {
         return clock.now - start
     }
 
+    /// The shortest of a few runs of `body`: a busy runner slows a run down, never speeds it up.
+    static func bestTime(of runs: Int = 3, _ body: () -> Void) -> Duration {
+        (0..<runs).map { _ in time(body) }.min() ?? .zero
+    }
+
     /// Runs `make(n)` through `body` at a sixteenth of `size` and at full size: the full size must finish
     /// in `limit`, and take at most 40 times as long as the sixteenth. Linear work takes about 16 times
-    /// as long, work that grows with n^1.5 about 64 times and quadratic work 256 times.
+    /// as long, work that grows with n^1.5 about 64 times and quadratic work 256 times. Each size is timed
+    /// at its best of three runs, and runs under 100 ms are too short to judge.
     static func expectLinear(
         _ name: String, size: Int, limit: Duration = .seconds(20), make: (Int) -> String, _ body: (String) -> Void
     ) {
         let small = make(size / 16)
         let large = make(size)
-        let sixteenth = time { body(small) }
         let full = time { body(large) }
         #expect(full < limit, "\(name): \(full) for \(size)")
-        // Below 50 ms the timing is noise.
-        if full > .milliseconds(50) {
-            #expect(full < sixteenth * 40, "\(name): \(sixteenth) for \(size / 16), \(full) for \(size)")
+        if full >= limit || full <= .milliseconds(100) {
+            return
         }
+        let sixteenth = bestTime { body(small) }
+        let bestFull = min(full, bestTime(of: 2) { body(large) })
+        #expect(
+            bestFull < sixteenth * 40, "\(name): \(sixteenth) for \(size / 16), \(bestFull) for \(size)")
     }
 
     // MARK: - Markdown

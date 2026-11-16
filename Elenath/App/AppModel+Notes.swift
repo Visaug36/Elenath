@@ -53,6 +53,12 @@ extension AppModel {
         }
         lastStep = Task { _ = await work.value }
         guard let undoManager else { return }
+        // Each step is an undo group of its own. AppKit groups by event, so steps started without one (link
+        // repair, the self-check, later Nano bot) would otherwise share a group and be undone together.
+        let groupsItself = !isUndoOrRedo && undoManager.groupingLevel == 0
+        if groupsItself {
+            undoManager.beginUndoGrouping()
+        }
         undoManager.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
                 model.run(
@@ -64,6 +70,9 @@ extension AppModel {
             }
         }
         undoManager.setActionName(name)
+        if groupsItself {
+            undoManager.endUndoGrouping()
+        }
     }
 
     // MARK: - Notes

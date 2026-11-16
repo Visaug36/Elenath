@@ -75,6 +75,9 @@ public enum NoteStoreError: Error, Equatable, Sendable {
     case notANote
     /// The note is larger than Elenath opens (`NoteLimits.maximumOpenedBytes`).
     case tooLarge
+    /// What was moved to the Trash can't be reached there any more: it was emptied, or (in the App
+    /// Sandbox) Elenath may not take things back out of it. Finder's Put Back still can.
+    case cannotPutBack(String)
 }
 
 /// Reads and writes the notes, folders and attachments of a library (docs/ARCHITECTURE.md, "Notes").
@@ -330,7 +333,7 @@ public actor NoteStore {
     public func restore(from trashed: URL, to path: ItemPath, in container: Container) async throws -> ItemPath {
         guard !path.isRoot else { throw NoteStoreError.notFound }
         let folderURL = try await writableFolderURL(path.folder, in: container)
-        guard fileSystem.info(at: trashed) != nil else { throw NoteStoreError.notFound }
+        guard fileSystem.info(at: trashed) != nil else { throw NoteStoreError.cannotPutBack(path.name) }
         try fileSystem.createDirectory(at: folderURL)
         let name = availableNoteName(for: path.name, in: folderURL)
         guard let restored = path.folder.appending(name) else { throw NoteStoreError.notFound }

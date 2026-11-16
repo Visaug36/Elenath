@@ -463,6 +463,26 @@ struct NoteStoreTests {
         #expect(fixture.names(in: "Uni/Physics") == ["Lecture 7 2.md", "Lecture 7.md"])
     }
 
+    @Test("What can't be reached in the Trash any more is named, so the user can put it back from Finder")
+    func cannotPutBack() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let uni = try await fixture.space("Uni")
+        let ref = fixture.ref(uni, "Lecture 7.md")
+        try fixture.write("keep me", to: "Uni/Lecture 7.md")
+        let trashed = try #require(try await fixture.notes.trash(ref))
+        // The Trash was emptied, or the sandbox keeps Elenath out of it.
+        try FileManager.default.removeItem(at: trashed)
+        await #expect(throws: NoteStoreError.cannotPutBack("Lecture 7.md")) {
+            try await fixture.notes.restore(from: trashed, to: ref.path, in: ref.container)
+        }
+        let space = try #require(try await fixture.catalog.trashSpace(uni.id))
+        try FileManager.default.removeItem(at: space)
+        await #expect(throws: NoteStoreError.cannotPutBack("Uni")) {
+            try await fixture.catalog.restoreSpace(from: space, named: "Uni")
+        }
+    }
+
     // MARK: - Folders and attachments
 
     @Test("Folders: new ones get a number when the name is taken, renames refuse a clash")

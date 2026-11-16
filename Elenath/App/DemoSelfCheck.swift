@@ -139,50 +139,77 @@ final class DemoSelfCheck {
     private func changeNotes() async throws {
         let space = try uni()
         let container = Container.space(space.id)
-        model.newNote(titled: "Self check", in: container, folder: .root)
-        try await stepsDone()
+        try await act("make a note") { self.model.newNote(titled: "Self check", in: container, folder: .root) }
         let created = NoteRef(container: container, path: ItemPath("Self check.md")!)
-        try await settle()
-        model.rename(created, to: "Self check renamed")
-        try await stepsDone()
+        try await act("rename it") { self.model.rename(created, to: "Self check renamed") }
         let renamed = NoteRef(container: container, path: ItemPath("Self check renamed.md")!)
         let folder = model.folders(in: container).first ?? .root
-        model.move(renamed, to: folder, in: container)
-        try await stepsDone()
+        try await act("move it") { self.model.move(renamed, to: folder, in: container) }
+        try await undo(times: 2)
+        try await redo(times: 2)
         let moved = NoteRef(container: container, path: folder.appending("Self check renamed.md")!)
-        model.trash(moved)
-        try await stepsDone()
-        try await undo(times: 3)
-        try await redo(times: 3)
+        try await act("move it to the Trash") { self.model.trash(moved) }
+        try await undoMoveToTrash()
     }
 
     private func changeFolders() async throws {
         let container = Container.space(try uni().id)
-        model.newFolder(in: container, folder: .root)
-        try await stepsDone()
+        try await act("make a folder") { self.model.newFolder(in: container, folder: .root) }
         let made = model.folders(in: container).first { $0.name.hasPrefix("New Folder") }
         guard let made else { throw Failure(description: "the new folder isn't listed") }
-        model.renameFolder(made, in: container, to: "Self check folder")
-        try await stepsDone()
-        model.trashItem(ItemPath("Self check folder")!, in: container)
-        try await stepsDone()
-        try await undo(times: 3)
+        try await act("rename it") { self.model.renameFolder(made, in: container, to: "Self check folder") }
+        try await undo(times: 1)
+        try await redo(times: 1)
+        try await act("move it to the Trash") { self.model.trashItem(ItemPath("Self check folder")!, in: container) }
+        try await undoMoveToTrash()
     }
 
     private func changeSpaces() async throws {
-        model.createSpace(Space(name: "Self Check", keywords: ["selfcheck"]))
-        try await stepsDone()
+        try await act("make a space") { self.model.createSpace(Space(name: "Self Check", keywords: ["selfcheck"])) }
         guard var space = model.spaces.first(where: { $0.name == "Self Check" }) else {
             throw Failure(description: "the new space isn't listed")
         }
         try await visit(.folder(.space(space.id), .root))
         space.name = "Self Check Sealed"
         space.isSealed = true
-        model.updateSpace(space)
+        let sealed = space
+        try await act("rename and seal it") { self.model.updateSpace(sealed) }
+        try await undo(times: 1)
+        try await redo(times: 1)
+        try await act("move it to the Trash") { self.model.trashSpace(sealed.id) }
+        try await undoMoveToTrash()
+    }
+
+    /// Does one of Elenath's own changes, waits for it, and fails at once, naming it, if Elenath reported
+    /// an error.
+    private func act(_ name: String, _ body: () -> Void) async throws {
+        say("SELF-CHECK   \(name)")
+        body()
         try await stepsDone()
-        model.trashSpace(space.id)
+        if let error = model.operationError {
+            throw Failure(description: "\(name): the app reported: \(error)")
+        }
+    }
+
+    /// Undoes a move to the Trash. In the App Sandbox Elenath may not take an item back out of the Trash
+    /// (an open question since Ithil): then it must say so plainly, naming Finder's Put Back, and drop the
+    /// older undo steps instead of failing at each. Either way the log says which happened.
+    private func undoMoveToTrash() async throws {
+        guard let undoManager = model.undoManager, undoManager.canUndo else {
+            throw Failure(description: "the move to the Trash can't be undone")
+        }
+        say("SELF-CHECK   undo \(undoManager.undoActionName)")
+        undoManager.undo()
         try await stepsDone()
-        try await undo(times: 3)
+        guard let error = model.operationError else {
+            say("SELF-CHECK note: a move to the Trash was undone")
+            return
+        }
+        guard error.contains("Put Back") else {
+            throw Failure(description: "undoing the move to the Trash: the app reported: \(error)")
+        }
+        say("SELF-CHECK note: the sandbox keeps Elenath out of the Trash; the app pointed to Finder's Put Back")
+        model.operationError = nil
     }
 
     private func search() async throws {
@@ -305,16 +332,16 @@ final class DemoSelfCheck {
     private func undo(times: Int) async throws {
         guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
         for _ in 0..<times where undoManager.canUndo {
-            undoManager.undo()
-            try await stepsDone()
+            let name = "undo \(undoManager.undoActionName)"
+            try await act(name) { undoManager.undo() }
         }
     }
 
     private func redo(times: Int) async throws {
         guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
         for _ in 0..<times where undoManager.canRedo {
-            undoManager.redo()
-            try await stepsDone()
+            let name = "redo \(undoManager.redoActionName)"
+            try await act(name) { undoManager.redo() }
         }
     }
 

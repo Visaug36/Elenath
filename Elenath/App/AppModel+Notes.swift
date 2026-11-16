@@ -26,6 +26,9 @@ extension AppModel {
             return
         }
         stepsInFlight += 1
+        // An undo or redo that fails leaves the files unlike what the older steps expect, so those are
+        // dropped rather than fail one after another.
+        let isUndoOrRedo = undoManager?.isUndoing == true || undoManager?.isRedoing == true
         // The open note saves what was typed before the step, and nothing while it runs; afterwards it
         // shows what the step did and saves what was typed meanwhile, where the note is then.
         let open = session
@@ -37,6 +40,9 @@ extension AppModel {
             } catch {
                 self.report(error)
                 inverse = nil
+                if isUndoOrRedo {
+                    self.undoManager?.removeAllActions(withTarget: self)
+                }
             }
             await open?.endStep()
             self.stepsInFlight -= 1

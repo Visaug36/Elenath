@@ -300,7 +300,7 @@ public actor LibraryCatalog {
     /// it gets a number. Open the library again afterwards to see it.
     public func restoreSpace(from trashed: URL, named name: String) throws {
         _ = try editableLibrary()
-        guard fileSystem.isDirectory(at: trashed) else { throw LibraryCatalogError.unknownSpace }
+        guard fileSystem.isDirectory(at: trashed) else { throw NoteStoreError.cannotPutBack(name) }
         let taken = Set(
             ((try? fileSystem.contentsOfDirectory(at: root)) ?? []).map { NameSanitizer.key($0.lastPathComponent) })
         let folderName = UniqueName.available(name) { taken.contains(NameSanitizer.key($0)) }

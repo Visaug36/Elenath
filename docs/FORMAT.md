@@ -325,7 +325,7 @@ them is needed to open a library: all are rebuilt from the folder or are only a 
 |---|---|
 | Safety copies of `library.json` (`<library id>.json`) and of every `space.json` (`<library id>/<space id>.json`), with a record of which folder is which space | `SafetyCopies/` |
 | The search index, one SQLite database per space and one for the Inbox | `Index/<library id>/` |
-| Edits that could not be saved ("Title 2026-11-10 14.30.05.md"). When the library next opens, Elenath offers to put them in the Inbox; a copy put there goes to the Trash | `Recovery/<library id>/` |
+| Edits that could not be saved ("Title (unsaved 2026-11-10 14.30.05).md"): an Inbox note's at the top, a space's note's in a folder named by the space's id. When the library next opens, Elenath offers to put each back at the top of its space or of the Inbox; a copy put back goes to the Trash. A copy whose space is gone stays and is shown in Finder. Copies made by 0.1.0 are named "Title 2026-11-10 14.30.05.md" and go to the Inbox | `Recovery/<library id>/` |
 
 Which folder is the library (a security-scoped bookmark), the appearance and the shortcuts are settings of
 the Mac, kept in the app's preferences.

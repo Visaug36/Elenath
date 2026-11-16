@@ -76,6 +76,7 @@
     "Elenath can't edit this file's text encoding, so it is shown read-only." : {},
     "Elenath can't find its folder" : {},
     "Elenath can't open this library" : {},
+    "Elenath can't take “%@” back out of the Trash. In Finder, open the Trash, select it and choose File › Put Back." : {},
     "Elenath can't use that folder" : {},
     "Elenath can't use that folder." : {},
     "Elenath couldn't create a library in this folder." : {},

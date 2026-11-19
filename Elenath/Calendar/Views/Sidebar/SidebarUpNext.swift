@@ -1,30 +1,6 @@
 import ElenathCore
 import SwiftUI
 
-/// "Up next" (Today's first card): the next few events of visible subjects, from every space (the calendar
-/// exception: title, time and location only). The very next one is highlighted in `AccentSoft` with its
-/// secondary line in amber ("in 10 min · 14:00 · Room B204"). Clicking a row shows the event in the calendar.
-struct SidebarUpNextSection: View {
-    @Environment(CalendarModel.self) private var model
-
-    var body: some View {
-        let upNext = model.upNext
-        VStack(alignment: .leading, spacing: 2) {
-            CalendarSidebarSectionLabel(title: "Up next")
-            if upNext.isEmpty {
-                Text("Nothing coming up")
-                    .font(Typography.secondary)
-                    .foregroundStyle(Color.textTertiary)
-                    .padding(.horizontal, 8)
-            } else {
-                ForEach(upNext) { occurrence in
-                    SidebarUpNextRow(occurrence: occurrence, isNext: occurrence.id == upNext.first?.id)
-                }
-            }
-        }
-    }
-}
-
 struct SidebarUpNextRow: View {
     @Environment(CalendarModel.self) private var model
     let occurrence: Occurrence

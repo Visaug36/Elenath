@@ -5,8 +5,9 @@
 <h1 align="center">Elenath</h1>
 
 <p align="center">
-  <strong>One private, offline home for your notes on the Mac: plain Markdown files in real Finder folders,
-  with a small on-device assistant that files what you dump on it and shows how things connect.</strong>
+  <strong>One private, offline home for your notes and your calendar on the Mac: plain Markdown files in real
+  Finder folders, with a small on-device assistant that files what you dump on it and shows how things
+  connect.</strong>
 </p>
 
 <p align="center">
@@ -20,13 +21,14 @@
   <img src="docs/images/note-night.png" alt="Elenath's window in the Night appearance: the sidebar with Today, the Inbox and three spaces, and a lecture note open in the editor, with its links and tasks styled as typed">
 </p>
 
-Elenath is the sibling of [Ithil](https://github.com/Visaug36/Ithil), a calendar for students: the same look and
-the same principles. Every note is a star, and links are the lines between them.
+Elenath grew out of [Ithil](https://github.com/Visaug36/Ithil), a calendar for students, and since 0.2 it does
+everything Ithil does: the same look, the same principles, the same folders. Every note is a star, and links
+are the lines between them.
 
 ## Status
 
-Elenath is being built in the open, one phase at a time. **Version 0.1 is for notes**: everything below under
-"What it does" works. The calendar arrives in 0.2, and Nano bot, the assistant, in 0.4.
+Elenath is being built in the open, one phase at a time. **Version 0.2 adds the calendar**: everything below
+under "What it does" works. Search by meaning arrives in 0.3, and Nano bot, the assistant, in 0.4.
 
 | Version | What it adds |
 |---|---|
@@ -42,24 +44,49 @@ Elenath is being built in the open, one phase at a time. **Version 0.1 is for no
 
 - **Spaces.** A space is a folder for one part of your life: university, volunteering, ideas. Spaces connect by
   default, so a link or a search can reach from an idea to a course. A space can be **sealed**: then its notes
-  stay out of search, links and Today everywhere else, and nothing from other spaces shows up inside it.
+  stay out of search, links and Today everywhere else, and nothing from other spaces shows up inside it. The
+  calendar is the one exception: a sealed space's events show on the calendar with everything else, by title,
+  time, place and file count, while their notes and files stay inside.
 - **An editor that stays out of the way.** One pane of Markdown, styled as you type: headings, lists, quotes,
   code, tables, links between notes (`[[Title]]`, with completion as you type `[[`), `#tags`, and tasks you can
   tick. Pictures and PDFs you drop on a note are copied next to it and shown in it. The notes that link to this
   one are listed under it. Any language, right to left included.
-- **Inbox and Quick Capture.** Press <kbd>⌥</kbd><kbd>⇧</kbd><kbd>Space</kbd> in any app, type or paste, and
-  it's in the Inbox. Start with a space's name ("uni: …") and it goes straight there. File Inbox items to a
-  space or folder from the Inbox or the note itself.
-- **Today**: what waits in the Inbox, open tasks and the notes you edited lately.
+- **The calendar.** Week, Day and Month, with every field an event needs: a time or all day, its own time
+  zone, a subject, a place, an alert, repeats ("this event or all future ones") and notes. Drag an event to
+  move it, or its edge to resize it. Each event has a Finder folder for its files: drop them on the event,
+  look at them with Quick Look. Alerts arrive while Elenath is closed ("Physics Lecture in 10 min · Room B204
+  · 2 files", with Open Files).
+- **Each subject has a home**, the space and folder its notes go to: "New Note for This Event" makes a note
+  for one lecture there, and the event lists its notes.
+- **Coming from Ithil?** Settings › Calendar › Bring In Ithil Calendar… copies your events, subjects and every
+  event's files into Elenath, checks that everything arrived, and leaves your Ithil folder as it is.
+- **Inbox and Quick Capture.** Press <kbd>⌥</kbd><kbd>Space</kbd> in any app, type or paste, and it's in the
+  Inbox. Start with a space's name ("uni: …") and it goes straight there. Type an event ("physics quiz
+  thursday 10am") and <kbd>⌥</kbd><kbd>↩</kbd> puts it on the calendar instead. File Inbox items to a space or
+  folder from the Inbox or the note itself.
+- **Today**: what's up next, what waits in the Inbox, open tasks and the notes you edited lately. The menu bar
+  shows today and the next event, with Open Files and Quick Capture.
 - **Search** across titles, text, tags and file names as you type, with filters for space, folder, tag and kind.
   <kbd>⌘</kbd><kbd>O</kbd> jumps to a note by its title.
 - **Import**: drop Markdown, text, Word and rich-text documents, PDFs, pictures, whole folders or a WhatsApp chat
   on a space or the Inbox. Everything is copied; your originals stay where they were.
 - **Plain files, live.** Rename or move a note and the links to it follow; rename one in Finder and Elenath
   offers to update its links. Edit a note in another app and Elenath shows the change at once. If a note changes on disk while you have unsaved edits, you keep both.
-- **Undo for everything**: typing, ticking a task, renaming, moving, filing, trashing.
+- **Undo for everything**: typing, ticking a task, renaming, moving, filing, trashing, and every change to an
+  event.
 - **Night and Dawn**, or matching the system.
 
+<p align="center">
+  <img src="docs/images/week-night.png" alt="The calendar's week: lectures, labs and a Red Cross shift in their subjects' colors, the line marking now, and the mini month and subjects in the sidebar">
+</p>
+<p align="center">
+  <img src="docs/images/event-night.png" width="49%" alt="An event's details: time, place, alert and repeat, its home in Uni, its notes and its two files">
+  <img src="docs/images/sealed-event-night.png" width="49%" alt="A Red Cross shift seen from outside its sealed space: the time, place and file count, with Open Files, and a card saying its notes and files are kept in Red Cross">
+</p>
+<p align="center">
+  <img src="docs/images/month-night.png" width="49%" alt="The calendar's month, with all-day events as bars">
+  <img src="docs/images/capture-event-night.png" width="49%" alt="Quick Capture reading “physics quiz thursday 10am” as an event on Thursday at 10:00, with ⌥↩ to add it to the calendar">
+</p>
 <p align="center">
   <img src="docs/images/today-night.png" width="49%" alt="Today: the Inbox's waiting items, open tasks from every space that mixes, and recently edited notes">
   <img src="docs/images/inbox-night.png" width="49%" alt="The Inbox, with a menu on each item to file it to a space or folder">
@@ -73,14 +100,12 @@ Elenath is being built in the open, one phase at a time. **Version 0.1 is for no
   <img src="docs/images/settings-night.png" width="34%" alt="Settings: the appearance, the Quick Capture shortcut and launch at login">
 </p>
 <p align="center">
-  <img src="docs/images/note-dawn.png" width="70%" alt="The same note in the Dawn appearance">
+  <img src="docs/images/note-dawn.png" width="49%" alt="The lecture note in the Dawn appearance">
+  <img src="docs/images/week-dawn.png" width="49%" alt="The calendar's week in the Dawn appearance">
 </p>
 
 ### Coming later
 
-- **The calendar** (0.2): everything Ithil does, from Week, Day and Month views to a Finder folder for each
-  event, in the same library folder. Events from every space show on the calendar, and each subject's notes
-  go where they belong.
 - **Search by meaning** (0.3): related notes, and the text inside PDFs and pictures.
 - **Nano bot** (0.4), a small assistant that runs on the Mac: it proposes where an Inbox item belongs, which
   notes to link, a tidier version of a messy dump, and answers questions from your notes. It never changes
@@ -112,15 +137,18 @@ To bring in the notes you have elsewhere, see [docs/IMPORT.md](docs/IMPORT.md).
 
 | Keys | What they do |
 |---|---|
-| <kbd>⌥</kbd><kbd>⇧</kbd><kbd>Space</kbd> | Quick Capture, from any app (change it in Settings) |
-| <kbd>⌘</kbd><kbd>N</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd> | New note / new folder |
+| <kbd>⌥</kbd><kbd>Space</kbd> | Quick Capture, from any app (change it in Settings) |
+| <kbd>⌘</kbd><kbd>N</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>N</kbd> | New note (a new event while the calendar is open) / new folder |
 | <kbd>⌘</kbd><kbd>O</kbd> | Jump to a note by its title |
 | <kbd>⌘</kbd><kbd>F</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>F</kbd> | Find in the note / search everywhere |
-| <kbd>⌘</kbd><kbd>1</kbd> / <kbd>⌘</kbd><kbd>2</kbd> | Today / the Inbox |
+| <kbd>⌘</kbd><kbd>T</kbd> / <kbd>⌥</kbd><kbd>⌘</kbd><kbd>I</kbd> | Today (today's date while the calendar is open) / the Inbox |
+| <kbd>⌘</kbd><kbd>1</kbd> / <kbd>⌘</kbd><kbd>2</kbd> / <kbd>⌘</kbd><kbd>3</kbd> | The calendar's Day, Week and Month, from anywhere |
+| <kbd>⌘</kbd><kbd>←</kbd> / <kbd>⌘</kbd><kbd>→</kbd> | The previous and next day, week or month |
+| <kbd>⌫</kbd> | Delete the selected event |
 | <kbd>⌘</kbd><kbd>[</kbd> / <kbd>⌘</kbd><kbd>]</kbd> | Back / forward |
 | <kbd>⌘</kbd>-click or <kbd>⌘</kbd><kbd>↩</kbd> on a link | Follow it |
 | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>I</kbd> | Import files or folders |
-| <kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd> | Undo / redo, for edits and for changes to notes and folders |
+| <kbd>⌘</kbd><kbd>Z</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>Z</kbd> | Undo / redo, for edits and for changes to notes, folders and events |
 
 ## How your files are stored
 
@@ -139,7 +167,13 @@ Elenath/
 │   └── Physics/
 │       ├── Lecture 7 notes.md        a note: Markdown that any editor can open
 │       └── Attachments/              files dropped on notes in this folder
-└── Red Cross/                        another space
+├── Red Cross/                        another space
+└── Calendar/                         the calendar, in Ithil's format
+    ├── .ithil/
+    │   ├── events.json               your subjects and events
+    │   └── backups/
+    └── 2026-11-16/
+        └── 14.00 Physics Lecture/    one event's files, in a folder made when the first one arrives
 ```
 
 - Notes are UTF-8 Markdown. A note's title is its file name. Elenath never reformats a note, and keeps
@@ -147,13 +181,15 @@ Elenath/
   and the date), which lets it repair links when you rename a note in Finder.
 - You can work in Finder too: new folders, renames and edits in other apps show up in Elenath at once. A new
   folder at the top of the library becomes a space.
+- The `Calendar` folder keeps Ithil's format, so it stays a valid Ithil folder. Which space and folder each
+  subject's notes go to is in `library.json`.
 - Files you drop are **copied**; the originals stay where they were.
 - Deleting moves to the **Trash**. Elenath never deletes anything permanently.
 - The full contract is in [docs/FORMAT.md](docs/FORMAT.md), so another app could read the same folder.
 
 ## Nano bot (from version 0.4)
 
-Nano bot will use the language model that Apple builds into macOS, on the Mac itself. Version 0.1 has no
+Nano bot will use the language model that Apple builds into macOS, on the Mac itself. Until then there's no
 assistant: you file the Inbox by hand.
 
 - **What it needs:** a Mac with Apple silicon, macOS 26 or later, and Apple Intelligence turned on. If any of
@@ -170,13 +206,16 @@ assistant: you file the Inbox by hand.
 - **Everything stays in your folder**, plus a search index and safety copies in Elenath's own container in
   `~/Library/Containers/io.github.visaug36.Elenath/`.
 - **Sealed spaces stay sealed.** Elenath checks it with tests that plant a word in a sealed space and make sure
-  it never shows up in another space's search, links, tags, tasks or Today.
+  it never shows up in another space's search, links, tags, tasks or Today. The calendar shows a sealed
+  space's events everywhere by title, time, place and file count, on purpose; the tests check that their
+  notes, file names and linked notes stay inside.
 - **Links in notes open safely.** ⌘-click opens web pages and e-mail at once. A link that would open another
   app, or a file in your notes that could run as a program, asks first.
 
 ## Backup and moving to a new Mac
 
-- **Backup:** copy your Elenath folder, or let Time Machine do it. It's a complete backup.
+- **Backup:** copy your Elenath folder, or let Time Machine do it. It's a complete backup, the calendar and
+  every event's files included.
 - **New Mac:** copy the folder over, install Elenath, and choose the folder on first launch. The search index
   rebuilds itself.
 
@@ -205,6 +244,12 @@ so and keeps your text; a copy also goes to `Recovery` in Elenath's container
 **Where did a deleted note go?**
 To the Trash, like a file deleted in Finder. <kbd>⌘</kbd><kbd>Z</kbd> brings it back, or put it back from the
 Trash.
+
+**I use Ithil. Do I need both?**
+No. Settings › Calendar › Bring In Ithil Calendar… copies your events, subjects and their files into Elenath
+and leaves your Ithil folder as it is; running it again brings in nothing twice. Then stop Ithil's own alerts
+so they don't arrive twice: System Settings › Notifications › Ithil, turn off Allow Notifications, quit Ithil
+and turn off its Open at Login.
 
 **Does Elenath sync between Macs?**
 Not by itself. It's a folder of plain files, so a folder sync you already trust works. Use it on one Mac at a

@@ -30,7 +30,10 @@ public enum DemoCalendar {
         let quizNotes = "Chapters 4–5. Bring the calculator."
         let halloween = CalendarDate(year: monday.year, month: 10, day: 31)
         let daysToHalloween = monday.days(to: halloween)
-        let halloweenDay = (0..<5 * 7).contains(daysToHalloween) ? daysToHalloween : 3 * 7 + 5
+        let isNearHalloween = (0..<5 * 7).contains(daysToHalloween)
+        let observatoryDay = isNearHalloween ? daysToHalloween : 3 * 7 + 5
+        // Elenath's demo week is in November: away from October 31 the evening is a plain night out.
+        let observatory = isNearHalloween ? "Halloween at the observatory" : "Night at the observatory"
 
         var schedule = Schedule(monday: monday, timeZone: timeZone, createdAt: monday.start(in: timeZone))
         // The week on screen. Day 0 is Monday.
@@ -55,7 +58,7 @@ public enum DemoCalendar {
         schedule.allDay(18, "Essay due", literature, day: 7 + 4)
         schedule.timed(19, "Midterm", algebra, day: 2 * 7 + 2, (10, 0), (12, 0))
         schedule.allDay(20, "Lab report due", biology, day: 3 * 7 + 3)
-        schedule.timed(21, "Halloween at the observatory", personal, day: halloweenDay, (20, 0), (23, 0))
+        schedule.timed(21, observatory, personal, day: observatoryDay, (20, 0), (23, 0))
 
         return CalendarDocument(id: fixedID(0, 1), subjects: subjects, events: schedule.events)
     }

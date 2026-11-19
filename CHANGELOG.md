@@ -7,6 +7,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - unreleased
+
+The calendar moves in: everything Ithil 1.0.0 does, inside Elenath, so Elenath is the only app to open.
+Ithil's code, tests and screens came across as they were, fitted into Elenath's window.
+
+### Added
+
+- **The calendar** (Calendar in the sidebar): Ithil's Week, Day and Month views with the mini month and the
+  subjects in the sidebar, events with every field (time or all-day, the event's own time zone, subject,
+  location, alert, repeat with "this event or all future ones", notes), drag to move and resize, the
+  calendar's own search, a Finder folder per event with drop, Quick Look and Show in Finder, notifications
+  that arrive while Elenath is closed ("Physics Lecture in 10 min", with Open Files), and Undo for all of it.
+- **The calendar lives in your library**, in a `Calendar` folder in Ithil's format, so one folder is still
+  your whole backup and the `Calendar` folder stays a valid Ithil folder.
+- **Bring in my Ithil calendar** (Settings › Calendar, onboarding, or the empty calendar): copies your
+  events, subjects and every event's files, checks that everything arrived, and leaves your Ithil folder as
+  it is. Running it again brings in nothing twice. It also says how to stop the alerts Ithil scheduled.
+- **Each subject has a home**: the space and folder its notes go to. "New Note for This Event" makes a note
+  there for one lecture, and the event shows its notes.
+- **Sealed spaces and the calendar**: events from every space show on the calendar, Today, notifications and
+  the menu bar, sealed ones too, by title, time, location and file count. Their notes, files' names and
+  linked notes stay in their space: outside it, an event says where they are kept, with Open Files and
+  "Open in Red Cross".
+- **Up next** on Today.
+- **Quick Capture adds events**: when the text names a date or a time ("physics quiz thursday 10am"), the
+  panel shows what it understood ("Thu 10:00 · Physics Quiz · Physics"); ⌥↩ adds it to the calendar, ⌥⌘↩ adds
+  it and opens it. ↩ still saves a note.
+- **The menu bar extra**: today and the next event with Open Files, Capture, the Inbox, Settings and Quit.
+- **Settings › Calendar and Subjects**, and onboarding pages for notifications and your Ithil calendar.
+
+### Changed
+
+- **Quick Capture's shortcut is ⌥Space** (it was ⌥⇧Space while Ithil had ⌥Space). A shortcut you recorded
+  stays. If ⌥Space is taken, perhaps by Ithil still running, Settings says so.
+- **Shortcuts**: ⌘1, ⌘2 and ⌘3 open Day, Week and Month from anywhere; ⌘T shows today in the calendar and
+  opens Today elsewhere; ⌘← and ⌘→ step the calendar; ⌘N makes a new event while the calendar is open and a
+  note elsewhere; the Inbox is ⌥⌘I.
+- **A space called "Calendar"** made by Elenath 0.1 stays a space; the calendar asks you to rename it.
+
 ## [0.1.1] - 2026-11-16
 
 A review for errors and security problems before the calendar arrives, by a reviewer independent of the

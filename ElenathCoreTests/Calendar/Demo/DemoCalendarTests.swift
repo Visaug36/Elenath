@@ -205,17 +205,22 @@ struct DemoCalendarTests {
         #expect(end.timeIntervalSince(start) == 90 * 60)
     }
 
-    @Test func halloweenFallsBackToASaturdayWhenOctober31IsFarAway() throws {
+    /// Ithil's demo always called it Halloween; Elenath's demo week is in November, where a Halloween on a
+    /// Saturday in December looked like a mistake, so away from October 31 it is a night at the observatory.
+    @Test func theObservatoryEveningIsOnHalloweenOrOnASaturdayWhenOctober31IsFarAway() throws {
         let cases: [(now: Date, expected: String)] = [
-            (Self.designNow, "2026-10-31 20:00-23:00"),
-            (Self.instant(2026, 10, 1, 12, 0, in: Self.amsterdam), "2026-10-31 20:00-23:00"),
-            (Self.instant(2026, 9, 1, 12, 0, in: Self.amsterdam), "2026-09-26 20:00-23:00"),
-            (Self.instant(2026, 12, 2, 12, 0, in: Self.amsterdam), "2026-12-26 20:00-23:00"),
+            (Self.designNow, "2026-10-31 20:00-23:00 Halloween at the observatory"),
+            (
+                Self.instant(2026, 10, 1, 12, 0, in: Self.amsterdam),
+                "2026-10-31 20:00-23:00 Halloween at the observatory"
+            ),
+            (Self.instant(2026, 9, 1, 12, 0, in: Self.amsterdam), "2026-09-26 20:00-23:00 Night at the observatory"),
+            (Self.instant(2026, 12, 2, 12, 0, in: Self.amsterdam), "2026-12-26 20:00-23:00 Night at the observatory"),
         ]
         for (now, expected) in cases {
             let library = DemoCalendar.make(weekContaining: now, timeZone: Self.amsterdam)
-            let party = try #require(library.events.first { $0.title == "Halloween at the observatory" })
-            #expect(Self.describe(party, in: Self.amsterdam) == "\(expected) Halloween at the observatory")
+            let evening = try #require(library.events.first { $0.title.hasSuffix("at the observatory") })
+            #expect(Self.describe(evening, in: Self.amsterdam) == expected)
         }
     }
 

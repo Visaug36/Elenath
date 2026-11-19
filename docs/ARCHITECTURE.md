@@ -846,8 +846,12 @@ func relocateFolder(_ chosen: URL)                   // only an existing library
   read-only banner and moving the library all work as in Ithil (`AppModel`, `FolderAccess`, `MainView`,
   `FilesController.moveLibrary`), with `LibraryCatalog` in place of `LibraryStore`.
 - **Undo and Redo.** Text edits use the text view's own undo. Everything else (create, rename, move, delete,
-  file, tick a task from a list, a link rewrite, a space change) registers one step on the window's undo
-  manager that does the opposite through the same code path.
+  file, tick a task from a list, a link rewrite, a space change, every calendar change) registers one step on
+  the window's undo manager that does the opposite through the same code path. Each step is an undo group of
+  its own (`UndoManager.registerAsOwnGroup`), also when it happens without a key press or click: AppKit
+  groups by event and closes a group only after the next event, and an explicit `beginUndoGrouping()` at
+  level 0 opens that event group too, so such steps used to share one group. The group is opened with
+  `groupsByEvent` off. The crash check names every Undo and Redo it expects.
 - **The watcher.** FSEvents on the library folder (file level, 0.3 s). `ElenathCore` sorts the paths:
   Elenath's own writes and noise are dropped; a changed note goes to the indexer and, if it is open, to its
   `EditorSession`; a structural change reloads the sidebar.
@@ -1095,6 +1099,31 @@ public enum CalendarImportError { case notAnIthilFolder, newerSchema(found:suppo
 - **The demo** (`DemoLibrary`) has Ithil's sample week with each subject homed (a sealed Red Cross subject
   among them), event files, a note for one lecture, and `DemoLibrary.writeIthilFolder(to:now:timeZone:)`
   writes a separate Ithil folder to try bringing in.
+
+### In the app (`Elenath/Calendar`)
+
+Ithil's app layer came across the same way, fitted into Elenath's window:
+
+- **`CalendarModel`** (Ithil's `AppModel`): the open calendar and its state (`closed`, `loading`, `ready`,
+  `nameTakenBySpace`, `unreadable`), the span, the selected day and event, the calendar's search, and every
+  change: events, subjects, Bring In. It saves through `CalendarSaveQueue` (an actor, one save at a time, the
+  newest wins) into `CalendarStore`, and tells its observers (`FilesController`, `NotificationsController`)
+  what changed. `AppModel+Calendar` opens it with the library and gives it the spaces, the calendar settings
+  from library.json and the window's undo manager.
+- **Where it shows:** the `calendar` route (`CalendarDetailView`: Ithil's week and day grid, month, details,
+  editor, files and search), the mini month and subjects in the sidebar under Calendar, `CalendarToolbar`
+  while it's open, Up next on Today, the menu bar extra and Quick Capture's event line.
+- **The workplace** is `CalendarModel.workplace`: everywhere, or one space ("Open in Red Cross"). Its `reach`
+  is the `CalendarReach` for it, and every view that shows notes, file names or linked notes asks it.
+- **`FilesController`** (Ithil's): event folders, files dropped on an event (copied in the background with
+  progress), Quick Look, Show in Finder, the folder watcher, and carrying folders along when an event's
+  title, date or time changes. A folder an event no longer needs goes to the Trash; Undo puts it back where
+  the sandbox allows.
+- **`NotificationsController`** (Ithil's, with `AlertSynchronizer`): alerts are scheduled with
+  `UNUserNotificationCenter`, so they arrive while Elenath is closed, under identifiers that start
+  `elenath.alert.`.
+- **Undo:** each change registers a step that puts the whole calendar back as it was (`restore`), and Redo
+  the same way. Edits of one subject within two seconds share a step, as in Ithil.
 
 ## Later phases
 

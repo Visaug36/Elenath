@@ -199,6 +199,44 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Phase 4 as built: the calendar (2026-11-19).** Ithil 1.0.0 moved in, ported, not rewritten: IthilCore and
+  its tests into `ElenathCore/Calendar` (Ithil's `LibraryCodecTests` too, with a byte-for-byte golden file of
+  events.json), Ithil's app layer into `Elenath/Calendar` (its `AppModel` is `CalendarModel`). The rules that
+  came out of it:
+  - **The calendar is `<library>/Calendar`, in Ithil's format**, with Ithil's backups and Elenath's safety copy
+    beside the spaces'. `Calendar` is reserved like `Inbox`; a space called "Calendar" from 0.1 stays a space
+    and the calendar asks for a rename. A link or file called Calendar is never used. events.json may be
+    128 MB (settings files keep 8 MB); markers are read up to 64 KB. The library move takes the calendar along.
+  - **Subject homes** are in library.json (`settings.calendar`), with the calendar's id. A home that can't be
+    read or whose space is gone **fails closed**: the events' content is read from nowhere until the subject
+    gets a home again (the brief's "counts as no home" would have opened a deleted sealed space's events).
+  - **`CalendarReach` is the calendar's one decision point** beside `Reach`: title, time, location and file
+    count everywhere; notes, file names and linked notes only where the home's content may be read. The
+    calendar works "everywhere" or inside one space ("Open in Red Cross", a capsule in the toolbar to leave).
+    The leak tests cover both halves, and check-rules rule 4b requires every `CalendarReach` query in them.
+  - **Notes for an occurrence** use front matter `event`; the index keeps it (schema 3) and
+    `Retrieval.notes(linkedTo:from:)` finds them through `Reach`. Notes for events without a home go to the
+    Inbox, and like every Inbox item they aren't shown elsewhere.
+  - **Bring in my Ithil calendar** reads the Ithil folder only, merges by id (a subject of the same name is
+    reused), copies event folders file by file without overwriting (markers written anew, hidden files left),
+    checks every file, and takes the merge in as one undo step. Running it again brings in nothing twice.
+  - **Event files join the main search in 0.3** with their text (phase 5); in 0.2 they are found from the
+    calendar, and the leak tests check they never reach the index.
+  - **Shortcuts** as agreed: ⌘1/2/3 Day/Week/Month, ⌘T, ⌘←/→, ⌘N (event in the calendar), ⌥⌘I Inbox; Quick
+    Capture ⌥Space by default (a recorded shortcut stays). Settings has Calendar and Subjects tabs; the menu
+    bar extra is `star.fill` with Capture and the Inbox; onboarding adds notifications and Ithil pages; an
+    empty calendar offers to bring Ithil's in.
+  - **Undo, corrected:** phase 3's "a group of its own when no group is open" didn't hold. With `groupsByEvent`
+    on, an explicit `beginUndoGrouping()` at level 0 also opens AppKit's event group, which closes only after
+    the next event, so changes made without one (Bring In after its copy, the crash check) all joined one
+    group; the crash check's log showed one Undo taking back three note steps, unnoticed since phase 3.
+    `UndoManager.registerAsOwnGroup` opens the group with `groupsByEvent` off; notes and the calendar use it
+    on the same window undo manager. The crash check now names every Undo and Redo it expects and checks
+    what each puts back.
+  - **Small choices, shown to the user:** Ithil's Up next is on Today and in the menu bar, not in the
+    calendar's sidebar (DESIGN.md); the app's back and forward stay beside the calendar's ‹ Today › in the
+    toolbar; the demo's "Halloween at the observatory" is a "Night at the observatory" away from 31 October,
+    since Elenath's demo week is in November.
 - **Phase 3 as built: the review (2026-11-16).** Two independent reviewers (one on files and untrusted input, one on links, SQLite, privacy, sealing and the repository) and the new crash check found the problems below; each is fixed with a test that fails without the fix. The rules that came out of it:
   - **Linear time for hostile text.** The Markdown scanner matches brackets and parentheses once per stretch, looks code spans up by run length and keeps CommonMark's openers bottom; `HostileInputTests.expectLinear` compares a sixteenth of the input with all of it (at most 40× the time). 300,000 random notes scanned the same before and after.
   - **Files that aren't what they seem.** `readData` refuses anything but a regular file (a named pipe blocks forever); listings, the index, attachments and imports skip pipes and links; a copied folder never holds a link; a chat's attachment names must be regular files right in the export; `.space`, `.elenath` and `backups` that are links are refused.

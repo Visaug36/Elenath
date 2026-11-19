@@ -11,15 +11,23 @@ public struct LibrarySnapshot: Sendable {
     public var recoveries: [RecoveryReport]
     /// Spaces whose space.json could not be read or restored. They count as sealed until the user decides.
     public var sealedByDefault: [SpaceID]
+    /// Elenath's calendar settings from library.json (`settings["calendar"]`).
+    public var calendarSettings: CalendarSettings
+    /// A space made by Elenath 0.1 that is called "Calendar", the name the calendar needs. It stays a space
+    /// until the user renames it; the calendar can't open until then.
+    public var spaceNamedCalendar: SpaceID?
 
     public init(
-        id: LibraryID, spaces: [Space], isReadOnly: Bool, recoveries: [RecoveryReport], sealedByDefault: [SpaceID]
+        id: LibraryID, spaces: [Space], isReadOnly: Bool, recoveries: [RecoveryReport], sealedByDefault: [SpaceID],
+        calendarSettings: CalendarSettings = CalendarSettings(), spaceNamedCalendar: SpaceID? = nil
     ) {
         self.id = id
         self.spaces = spaces
         self.isReadOnly = isReadOnly
         self.recoveries = recoveries
         self.sealedByDefault = sealedByDefault
+        self.calendarSettings = calendarSettings
+        self.spaceNamedCalendar = spaceNamedCalendar
     }
 }
 
@@ -66,7 +74,8 @@ public enum LibraryCatalogError: Error, Equatable, Sendable {
 /// The library folder: its library.json, its spaces and what is in their folders.
 ///
 /// The folder is the truth (docs/FORMAT.md). Every visible folder directly inside the library, except
-/// `Inbox`, is a space. A folder without `.space` gets a space.json the first time the library is opened.
+/// `Inbox` and `Calendar`, is a space. A folder without `.space` gets a space.json the first time the
+/// library is opened. (A space called "Calendar" made by Elenath 0.1 stays a space until it is renamed.)
 ///
 /// **Sealing fails closed.** A space.json that is missing or damaged is restored from its backups or its
 /// safety copy. When that isn't possible for a space Elenath has seen before, or the file is there but
@@ -199,6 +208,20 @@ public actor LibraryCatalog {
         orderedSpaces()
     }
 
+    // MARK: - Calendar settings
+
+    /// Elenath's calendar settings, from library.json.
+    public func calendarSettings() -> CalendarSettings {
+        CalendarSettings(from: library?.settings ?? [:])
+    }
+
+    /// Writes Elenath's calendar settings into library.json, keeping its other settings.
+    public func saveCalendarSettings(_ settings: CalendarSettings) async throws {
+        var library = try editableLibrary()
+        settings.written(into: &library.settings)
+        try await save(library)
+    }
+
     // MARK: - Spaces
 
     /// Makes a new space: its folder, with a space.json. The name is made safe first.
@@ -303,7 +326,10 @@ public actor LibraryCatalog {
         guard fileSystem.isDirectory(at: trashed) else { throw NoteStoreError.cannotPutBack(name) }
         let taken = Set(
             ((try? fileSystem.contentsOfDirectory(at: root)) ?? []).map { NameSanitizer.key($0.lastPathComponent) })
-        let folderName = UniqueName.available(name) { taken.contains(NameSanitizer.key($0)) }
+        // A space from Elenath 0.1 called "Calendar" comes back as "Calendar 2": the name is the calendar's now.
+        let folderName = UniqueName.available(name) {
+            taken.contains(NameSanitizer.key($0)) || NameSanitizer.isReservedAtLibraryRoot($0)
+        }
         let folder = root.appending(component: folderName, directoryHint: .isDirectory)
         guard PathContainment.isStrictlyInside(folder, folder: root) else { throw LibraryCatalogError.outsideLibrary }
         try fileSystem.moveItem(at: trashed, to: folder)
@@ -396,9 +422,11 @@ public actor LibraryCatalog {
     }
 
     private func snapshot(recoveries: [RecoveryReport], sealedByDefault: [SpaceID]) -> LibrarySnapshot {
-        LibrarySnapshot(
+        let calendarKey = NameSanitizer.key(NameSanitizer.calendarFolderName)
+        return LibrarySnapshot(
             id: library?.id ?? LibraryID(), spaces: orderedSpaces(), isReadOnly: isReadOnly, recoveries: recoveries,
-            sealedByDefault: sealedByDefault)
+            sealedByDefault: sealedByDefault, calendarSettings: calendarSettings(),
+            spaceNamedCalendar: entries.values.first { NameSanitizer.key($0.space.name) == calendarKey }?.space.id)
     }
 
     /// The spaces listed in library.json first, in that order, then the rest by name.
@@ -420,12 +448,24 @@ public actor LibraryCatalog {
         var names: [String] = []
         for item in contents {
             let name = item.lastPathComponent
-            guard !NameSanitizer.isReservedAtLibraryRoot(name), !NameSanitizer.isReservedInSpace(name),
+            guard !NameSanitizer.isReservedAtLibraryRoot(name) || isSpaceNamedCalendar(item),
+                !NameSanitizer.isReservedInSpace(name),
                 let info = fileSystem.info(at: item), info.isDirectory, !info.isSymbolicLink
             else { continue }
             names.append(name)
         }
         return names.sorted(by: Self.comesBefore)
+    }
+
+    /// Whether `folder` is a space made by Elenath 0.1 under the name the calendar needs now: called
+    /// "Calendar", with a `.space` folder and no `.ithil`. It stays a space so nothing in it disappears
+    /// from the sidebar; the app asks the user to rename it.
+    private func isSpaceNamedCalendar(_ folder: URL) -> Bool {
+        NameSanitizer.key(folder.lastPathComponent) == NameSanitizer.key(NameSanitizer.calendarFolderName)
+            && fileSystem.info(at: LibraryLayout.spaceMetadataFolder(in: folder)) != nil
+            && fileSystem.info(
+                at: folder.appending(component: LibraryLayout.calendarMetadataFolderName, directoryHint: .isDirectory))
+                == nil
     }
 
     private struct LoadedSpace {
@@ -560,7 +600,7 @@ public actor LibraryCatalog {
 
     /// Safety copies of this library's space.json files, and the record of which folder is which space.
     private func spaceSafetyDirectory(of libraryID: LibraryID) -> URL {
-        safetyDirectory.appending(component: libraryID.rawValue.uuidString, directoryHint: .isDirectory)
+        LibraryLayout.safetyDirectory(of: libraryID, in: safetyDirectory)
     }
 
     private func knownFoldersFile(of libraryID: LibraryID) -> URL {

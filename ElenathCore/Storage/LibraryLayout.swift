@@ -9,6 +9,9 @@ public enum LibraryLayout {
     public static let libraryFileName = "library.json"
     public static let spaceFileName = "space.json"
     public static let backupsFolderName = "backups"
+    /// The hidden folder inside the calendar's folder that holds events.json: Ithil's name, so the folder
+    /// stays a valid Ithil folder.
+    public static let calendarMetadataFolderName = ".ithil"
 
     /// `<root>/.elenath`
     public static func metadataFolder(in root: URL) -> URL {
@@ -18,6 +21,22 @@ public enum LibraryLayout {
     /// `<root>/Inbox`
     public static func inboxFolder(in root: URL) -> URL {
         root.appending(component: NameSanitizer.inboxFolderName, directoryHint: .isDirectory)
+    }
+
+    /// `<root>/Calendar`
+    public static func calendarFolder(in root: URL) -> URL {
+        root.appending(component: NameSanitizer.calendarFolderName, directoryHint: .isDirectory)
+    }
+
+    /// `<root>/Calendar/.ithil`
+    public static func calendarMetadataFolder(in root: URL) -> URL {
+        calendarFolder(in: root).appending(component: calendarMetadataFolderName, directoryHint: .isDirectory)
+    }
+
+    /// `<safety directory>/<library id>`: the safety copies of a library's space.json files and of its
+    /// calendar, and the record of which folder is which space. Outside the library, on this Mac only.
+    public static func safetyDirectory(of libraryID: LibraryID, in safetyDirectory: URL) -> URL {
+        safetyDirectory.appending(component: libraryID.rawValue.uuidString, directoryHint: .isDirectory)
     }
 
     /// `<space folder>/.space`

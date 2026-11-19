@@ -99,6 +99,9 @@ struct NameSanitizerTests {
         #expect(NameSanitizer.isReservedAtLibraryRoot(".DS_Store"))
         #expect(!NameSanitizer.isReservedAtLibraryRoot("Uni"))
         #expect(!NameSanitizer.isReservedAtLibraryRoot("Inbox 2"))
+        #expect(NameSanitizer.isReservedAtLibraryRoot("Calendar"))
+        #expect(NameSanitizer.isReservedAtLibraryRoot("calendar"))
+        #expect(!NameSanitizer.isReservedAtLibraryRoot("Calendar 2"))
 
         #expect(NameSanitizer.isReservedInSpace(".space"))
         #expect(NameSanitizer.isReservedInSpace("Attachments"))

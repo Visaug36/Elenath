@@ -13,7 +13,12 @@ import Testing
 /// - Nothing else comes out inside the sealed space.
 /// - The Inbox's marker comes out only in the Inbox, and nothing else comes out there.
 ///
-/// `scripts/check-rules.sh` fails when `Retrieval` has a public query that this file doesn't call.
+/// The calendar is the one deliberate exception (CLAUDE.md, "Spaces"): an event's title, time, location
+/// and file count cross every seal, its notes and its files' names never do. The markers are also planted
+/// in events' notes and file names, and everything `CalendarReach` gives is searched the same way.
+///
+/// `scripts/check-rules.sh` fails when `Retrieval` or `CalendarReach` has a public query that this file
+/// doesn't call.
 @Suite("Sealing: nothing leaks")
 struct SealingLeakTests {
     static let sealedMarker = "zebrafish"
@@ -27,6 +32,8 @@ struct SealingLeakTests {
         let redCross: Space
         let indexer: Indexer
         let retrieval: Retrieval
+        let calendarStore: CalendarStore
+        let calendar: CalendarDocument
 
         init() async throws {
             fixture = try await LibraryFixture()
@@ -40,9 +47,89 @@ struct SealingLeakTests {
             // one a link from here can reach. No marker word is written here or in another container's
             // notes: a marker exists only where it was planted.
             try fixture.write("A curious note that links to [[Shared title]].\n", to: "Ideas/Curious.md")
+            calendarStore = fixture.calendarStore()
+            calendar = try await Library.plantCalendar(
+                in: calendarStore, fixture: fixture, uni: uni, redCross: redCross)
             indexer = fixture.indexer()
             retrieval = fixture.retrieval()
             await indexer.refreshAll()
+        }
+
+        /// A calendar with an event homed in each space and one with no home. Each marker is in its
+        /// events' notes and in their files' names, never in a title or a location: those cross the seal.
+        static func plantCalendar(
+            in store: CalendarStore, fixture: LibraryFixture, uni: Space, redCross: Space
+        ) async throws -> CalendarDocument {
+            _ = try await store.load()
+            let shifts = Subject(name: "Shifts", color: .palette(.rose))
+            let lectures = Subject(name: "Lectures", color: .palette(.teal))
+            var settings = CalendarSettings()
+            settings.setHome(SubjectHome(space: redCross.id), forSubject: shifts.id)
+            settings.setHome(SubjectHome(space: uni.id, folder: ItemPath("Lectures")!), forSubject: lectures.id)
+            try await fixture.catalog.saveCalendarSettings(settings)
+
+            let start = CalendarFixtures.lectureStart
+            func event(_ title: String, _ subject: Subject?, location: String, notes: String, hours: Double) -> Event {
+                let begins = start.addingTimeInterval(hours * 3600)
+                return Event(
+                    title: title, timing: .timed(start: begins, end: begins.addingTimeInterval(3600), timeZone: .gmt),
+                    subjectID: subject?.id, location: location, notes: notes)
+            }
+            let calendar = CalendarDocument(
+                subjects: [shifts, lectures],
+                events: [
+                    event(
+                        "Night shift", shifts, location: "Harbour post", notes: "Brief the \(sealedMarker) team",
+                        hours: 0),
+                    event("Physics", lectures, location: "Hall B", notes: "Read the \(openMarker) chapter", hours: 2),
+                    event("Dentist", nil, location: "Main street", notes: "Ask about the \(openMarker)", hours: 4),
+                ])
+            try await store.save(calendar)
+            for (event, marker) in zip(calendar.events, [sealedMarker, openMarker, openMarker]) {
+                let folder = try await store.eventFolders.ensureFolder(for: CalendarFixtures.firstOccurrence(of: event))
+                try Data("\(marker) inside".utf8).write(to: folder.appending(component: "\(marker) rota.pdf"))
+            }
+            return calendar
+        }
+
+        /// Everything the calendar shows of its events' content from a workplace, through `CalendarReach`:
+        /// search results, notes and file names. Titles and locations are left out: they cross the seal.
+        func calendarContent(from workplace: Workplace) async -> String {
+            let calendarReach = CalendarReach(
+                workplace: workplace, spaces: await fixture.catalog.spaces(),
+                settings: await fixture.catalog.calendarSettings())
+            let expander = OccurrenceExpander(displayTimeZone: .gmt)
+            var found: [String] = []
+            func show(_ event: Event, _ occurrence: Occurrence) async {
+                if let notes = calendarReach.notes(of: event) {
+                    found.append(notes)
+                }
+                if let files = await calendarReach.files(for: occurrence, in: calendarStore.eventFolders) {
+                    found += files.map(\.name)
+                }
+                if calendarReach.mayReadContent(of: event), let home = calendarReach.home(of: event) {
+                    found.append("home \(home.folder)")
+                }
+                if calendarReach.hasMissingHome(event) {
+                    found.append("missing home")
+                }
+            }
+            let markers = [SealingLeakTests.sealedMarker, SealingLeakTests.openMarker, SealingLeakTests.inboxMarker]
+            for query in markers + ["team", "chapter", "rota", "brief", "ask"] {
+                for occurrence in calendarReach.search(
+                    calendar, query: query, now: CalendarFixtures.start, expander: expander)
+                {
+                    found.append("found \(occurrence.event.title) by \(query)")
+                    await show(occurrence.event, occurrence)
+                }
+                for event in calendar.events where calendarReach.matches(event, query: query) {
+                    found.append("matched \(event.title) by \(query)")
+                }
+            }
+            for event in calendar.events {
+                await show(event, CalendarFixtures.firstOccurrence(of: event))
+            }
+            return found.joined(separator: "\n").lowercased()
         }
 
         /// Puts a marker everywhere the index reads, inside one container's folder.
@@ -417,6 +504,70 @@ struct SealingLeakTests {
         try await library.fixture.catalog.update(uni)
         #expect(try await !library.everything(from: .everywhere).contains(Self.openMarker))
         #expect(try await !library.everything(from: .space(library.uni.id)).contains("curious"))
+    }
+
+    // MARK: - The calendar exception
+
+    @Test("A sealed event's notes and files' names stay inside its home space")
+    func calendarContentStaysInside() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let outside: [Workplace] = [
+            .space(library.uni.id), .space(library.ideas.id), .everywhere, .inbox, .space(SpaceID()),
+        ]
+        for workplace in outside {
+            let text = await library.calendarContent(from: workplace)
+            #expect(!text.contains(Self.sealedMarker), "the sealed marker leaked to \(workplace)")
+            #expect(!text.contains("found night shift by brief"))
+            // Nor do event files ever reach the index, from anywhere, in 0.2.
+            #expect(try await !library.everything(from: workplace).contains("rota"))
+        }
+        let inside = await library.calendarContent(from: .space(library.redCross.id))
+        #expect(inside.contains("brief the zebrafish team"))
+        #expect(inside.contains("zebrafish rota.pdf"))
+        #expect(inside.contains("found night shift by zebrafish"))
+    }
+
+    @Test("Nothing of other events' content shows inside the sealed space")
+    func noCalendarContentEntersTheSealedSpace() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let inside = await library.calendarContent(from: .space(library.redCross.id))
+        #expect(!inside.contains(Self.openMarker))
+        #expect(!inside.contains(Self.inboxMarker))
+        let open = await library.calendarContent(from: .space(library.uni.id))
+        #expect(open.contains("read the quokka chapter"))
+        #expect(open.contains("ask about the quokka"))
+        #expect(open.contains("quokka rota.pdf"))
+        #expect(open.contains("home lectures"))
+    }
+
+    @Test("Every event's title, time, location and file count cross every seal")
+    func theCalendarShowsEveryEventEverywhere() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let expander = OccurrenceExpander(displayTimeZone: .gmt)
+        let week = DateInterval(
+            start: CalendarFixtures.lectureStart.addingTimeInterval(-86_400),
+            end: CalendarFixtures.lectureStart.addingTimeInterval(86_400))
+        let occurrences = expander.occurrences(of: library.calendar.events, in: week)
+        #expect(occurrences.map(\.event.title).sorted() == ["Dentist", "Night shift", "Physics"])
+        let shift = try #require(occurrences.first { $0.event.title == "Night shift" })
+        #expect(await library.calendarStore.eventFolders.fileCount(for: shift) == 1)
+        #expect(await library.calendarStore.eventFolders.existingFolder(for: shift) != nil)
+
+        for workplace: Workplace in [
+            .space(library.uni.id), .space(library.ideas.id), .space(library.redCross.id), .everywhere, .inbox,
+        ] {
+            let calendarReach = CalendarReach(
+                workplace: workplace, spaces: await library.fixture.catalog.spaces(),
+                settings: await library.fixture.catalog.calendarSettings())
+            for query in ["night shift", "harbour", "physics", "hall b", "dentist"] {
+                let found = calendarReach.search(
+                    library.calendar, query: query, now: CalendarFixtures.start, expander: expander)
+                #expect(found.count == 1, "\(query) from \(workplace)")
+            }
+        }
     }
 
     @Test("A space whose settings can't be read counts as sealed")

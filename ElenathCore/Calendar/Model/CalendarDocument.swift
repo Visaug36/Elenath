@@ -23,6 +23,9 @@ public struct CalendarDocument: VersionedDocument {
     /// Ithil 1.0.0's schema. A calendar written by a newer Ithil opens read-only.
     public static let currentSchemaVersion = 1
     public static let migrator = SchemaMigrator(currentVersion: currentSchemaVersion, steps: [:])
+    /// A calendar grows with the years: about 600 bytes an event, so this holds well over 100,000 events.
+    /// Elenath's own settings files keep the much smaller `DocumentCodec.maximumByteCount`.
+    public static let maximumByteCount = 128 * 1024 * 1024
 
     public var documentID: UUID { id }
 

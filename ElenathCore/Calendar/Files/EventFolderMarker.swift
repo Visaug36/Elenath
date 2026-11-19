@@ -46,10 +46,25 @@ extension EventFolderMarker {
         self.init(eventID: occurrence.event.id, date: occurrence.date)
     }
 
+    /// The most of a marker file that is read. A real one is about 100 bytes; a larger file isn't a marker.
+    static let maximumByteCount = 64 * 1024
+
     /// Reads a marker file's contents. Nil when it isn't a marker.
     init?(markerFileData data: Data) {
-        guard let marker = try? JSONDecoder().decode(EventFolderMarker.self, from: data) else { return nil }
+        guard data.count < Self.maximumByteCount, DocumentCodec.isSafeToParse(data),
+            let marker = try? JSONDecoder().decode(EventFolderMarker.self, from: data)
+        else { return nil }
         self = marker
+    }
+
+    /// The marker in `folder`, read without following a link and without reading more than
+    /// `maximumByteCount` bytes. Nil when there is none or it isn't a marker.
+    static func read(in folder: URL, fileSystem: any FileSystem) -> EventFolderMarker? {
+        let file = folder.appending(component: fileName, directoryHint: .notDirectory)
+        guard let info = fileSystem.info(at: file), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial,
+            let data = try? fileSystem.readData(at: file, upTo: maximumByteCount)
+        else { return nil }
+        return EventFolderMarker(markerFileData: data)
     }
 
     /// The occurrence this marker names.

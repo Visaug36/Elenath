@@ -78,6 +78,21 @@ if [[ -f "$retrieval" ]]; then
     done
 fi
 
+# 4b. The calendar's sealing exception: every query of CalendarReach is asked in the leak tests too.
+calendar_reach=ElenathCore/Calendar/Library/CalendarReach.swift
+if [[ -f "$calendar_reach" ]]; then
+    queries=$(awk '/^public struct CalendarReach/ { inside = 1 } inside' "$calendar_reach" \
+        | (grep -oE 'public func [A-Za-z]+' || true) | awk '{ print $3 }' | sort -u)
+    if [[ -z "$queries" ]]; then
+        fail "Found no queries in $calendar_reach. Has CalendarReach moved?"
+    fi
+    for query in $queries; do
+        if ! grep -qE "calendarReach\.${query}\(" "$leak_tests" 2> /dev/null; then
+            fail "CalendarReach.${query} is not in $leak_tests. A query that isn't checked there may leak a sealed event."
+        fi
+    done
+fi
+
 # 5. Privacy in logs: what may name the user's notes or files is never public.
 leaks=$(grep -rnE --include='*.swift' \
     '(localizedDescription|\.path|[Uu][Rr][Ll]|[Tt]itle|[Nn]ame|[Bb]ody|[Tt]ext|[Pp]rompt)[A-Za-z]*(\)[A-Za-z.]*)*, privacy: \.public' \

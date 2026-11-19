@@ -323,8 +323,7 @@ public actor EventFolders {
     }
 
     private func readMarker(in folder: URL) -> EventFolderMarker? {
-        guard let data = try? fileSystem.readData(at: Self.markerFile(in: folder)) else { return nil }
-        return EventFolderMarker(markerFileData: data)
+        EventFolderMarker.read(in: folder, fileSystem: fileSystem)
     }
 
     private func writeMarker(_ marker: EventFolderMarker, in folder: URL) throws {

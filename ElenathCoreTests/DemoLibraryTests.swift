@@ -41,6 +41,67 @@ struct DemoLibraryTests {
         #expect(TestFiles.exists(root.appending(path: "Red Cross/First aid course/Session 3 - Bleeding and shock.md")))
     }
 
+    @Test("A week of events, each subject at home, the Red Cross shifts sealed")
+    func calendar() async throws {
+        let folder = try TempFolder()
+        defer { folder.remove() }
+        let (root, snapshot) = try await write(into: folder, "Demo")
+        let store = CalendarStore(
+            libraryRoot: root, libraryID: snapshot.id, safetyDirectory: folder.child("Demo-safety"),
+            knownCalendarID: snapshot.calendarSettings.calendarID, fileSystem: LocalFileSystem(),
+            timeSource: FixedTimeSource(Self.now))
+        let calendar = try await store.load().document
+        #expect(
+            calendar.subjects.map(\.name) == [
+                "Physics", "Linear Algebra", "Literature", "Biology", "Personal", "Red Cross",
+            ])
+        #expect(calendar.events.count == 23)
+        #expect(snapshot.calendarSettings.calendarID == calendar.id)
+
+        let uni = try #require(snapshot.spaces.first { $0.name == "Uni" })
+        let redCross = try #require(snapshot.spaces.first { $0.name == "Red Cross" })
+        let everywhere = CalendarReach(
+            workplace: .everywhere, spaces: snapshot.spaces, settings: snapshot.calendarSettings)
+        let shift = try #require(calendar.events.first { $0.title == "Ambulance shift" })
+        let lecture = try #require(calendar.events.first { $0.title == "Physics Lecture" })
+        let lunch = try #require(calendar.events.first { $0.title == "Lunch with Mara" })
+        #expect(everywhere.home(of: shift)?.space == redCross.id)
+        #expect(!everywhere.mayReadContent(of: shift))
+        #expect(everywhere.home(of: lecture) == SubjectHome(space: uni.id, folder: ItemPath("Physics")!))
+        #expect(everywhere.mayReadContent(of: lecture))
+        #expect(everywhere.home(of: lunch) == nil)  // Personal has no home.
+
+        #expect(TestFiles.names(in: root.appending(path: "Calendar")).contains(".ithil"))
+        let days = TestFiles.names(in: root.appending(path: "Calendar")).filter { !$0.hasPrefix(".") }
+        #expect(days.count == 3)
+        // Thursday's lecture (another event than Tuesday's) has a note for it.
+        let note = try String(contentsOf: root.appending(path: "Uni/Physics/Lecture 9 notes.md"), encoding: .utf8)
+        let lectures = calendar.events.filter { $0.title == "Physics Lecture" }
+        #expect(lectures.count == 2)
+        #expect(lectures.contains { note.contains("event: \($0.id.uuidString)/2026-11-12") })
+    }
+
+    @Test("The demo's Ithil folder brings in what the calendar lacks, and nothing twice")
+    func ithilFolder() async throws {
+        let folder = try TempFolder()
+        defer { folder.remove() }
+        let (root, snapshot) = try await write(into: folder, "Demo")
+        let ithil = folder.child("Ithil")
+        try DemoLibrary.writeIthilFolder(to: ithil, now: Self.now, timeZone: Self.utc)
+        let store = CalendarStore(
+            libraryRoot: root, libraryID: snapshot.id, safetyDirectory: folder.child("Demo-safety"),
+            knownCalendarID: snapshot.calendarSettings.calendarID, fileSystem: LocalFileSystem(),
+            timeSource: FixedTimeSource(Self.now))
+        let calendar = try await store.load().document
+        let result = try await CalendarImport.run(
+            from: ithil, into: calendar, calendarFolder: store.folder, libraryRoot: root,
+            eventFolders: store.eventFolders, fileSystem: LocalFileSystem())
+        #expect(result.report.subjectsAdded == 1 && result.report.subjectsAlreadyThere == 1)
+        #expect(result.report.eventsAdded == 2 && result.report.eventsAlreadyThere == 1)
+        #expect(result.report.filesCopied == 1 && result.report.filesAlreadyThere == 1)
+        #expect(result.report.countsMatch)
+    }
+
     @Test("Equal arguments give equal libraries, byte for byte")
     func deterministic() async throws {
         let folder = try TempFolder()
@@ -95,12 +156,12 @@ struct DemoLibraryTests {
             try await retrieval.backlinks(to: goal, from: Reach.workplace(of: goal.container)).map(\.source.title) == [
                 "Lecture 7 notes"
             ])
-        #expect(try await retrieval.openTasks(from: .everywhere, limit: 100).count == 10)
+        #expect(try await retrieval.openTasks(from: .everywhere, limit: 100).count == 11)
         #expect(try await retrieval.inboxCount() == 4)
         // What was changed last comes first.
         #expect(
             try await retrieval.recentNotes(from: .everywhere, limit: 2).map(\.title) == [
-                "Lecture 8 notes", "Lecture 7 notes",
+                "Lecture 9 notes", "Lecture 8 notes",
             ])
     }
 }

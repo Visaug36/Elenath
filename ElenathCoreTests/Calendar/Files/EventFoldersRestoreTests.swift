@@ -131,7 +131,7 @@ private final class TrashOnlyDisk: FileSystem, @unchecked Sendable {
     }
 }
 
-/// A unique temporary folder holding the library root ("CalendarDocument") and a sibling ("Outside") that must stay
+/// A unique temporary folder holding the library root ("Calendar") and a sibling ("Outside") that must stay
 /// untouched, plus the `EventFolders` under test.
 private struct RestoreSandbox {
     let base: URL
@@ -143,7 +143,7 @@ private struct RestoreSandbox {
     init() throws {
         let name = "IthilEventFoldersRestoreTests-\(UUID().uuidString)"
         base = FileManager.default.temporaryDirectory.appending(component: name, directoryHint: .isDirectory)
-        root = base.appending(component: "CalendarDocument", directoryHint: .isDirectory)
+        root = base.appending(component: "Calendar", directoryHint: .isDirectory)
         outside = base.appending(component: "Outside", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true, attributes: nil)
@@ -499,7 +499,7 @@ struct EventFoldersRestoreTests {
         _ = try await sandbox.folderWithFile(for: occurrence)
         let trashedFolder = try await sandbox.folders.trashFolder(for: occurrence)
         let trashed = try #require(trashedFolder)
-        let moved = sandbox.base.appending(component: "CalendarDocument moved", directoryHint: .isDirectory)
+        let moved = sandbox.base.appending(component: "Calendar moved", directoryHint: .isDirectory)
         try FileManager.default.moveItem(at: sandbox.root, to: moved)
 
         let error = await Fixture.folderError {

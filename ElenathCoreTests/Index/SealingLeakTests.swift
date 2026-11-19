@@ -132,6 +132,13 @@ struct SealingLeakTests {
             return found.joined(separator: "\n").lowercased()
         }
 
+        /// The event occurrence the marker's roster is a note for.
+        static func eventLink(_ marker: String) -> EventLink {
+            let number = [sealedMarker, openMarker, inboxMarker].firstIndex(of: marker) ?? 9
+            let id = UUID(uuidString: String(format: "4954484C-DE30-4000-8000-%012d", number + 1))!
+            return EventLink(eventID: id, day: "2026-10-06")
+        }
+
         /// Puts a marker everywhere the index reads, inside one container's folder.
         static func plant(_ marker: String, in folder: String, _ fixture: LibraryFixture) throws {
             try fixture.write(
@@ -140,6 +147,7 @@ struct SealingLeakTests {
                 id: \(UUID().uuidString)
                 tags: [\(marker)-front]
                 kind: idea
+                event: \(eventLink(marker).string.lowercased())
                 ---
                 # The \(marker) heading
 
@@ -201,6 +209,7 @@ struct SealingLeakTests {
             for marker in markers {
                 add(try await retrieval.notes(tagged: "\(marker)-tag", from: workplace))
                 add(try await retrieval.notes(tagged: "\(marker)-front", from: workplace))
+                add(try await retrieval.notes(linkedTo: Library.eventLink(marker), from: workplace))
             }
             for task in try await retrieval.openTasks(from: workplace, limit: 200) {
                 found += [task.text, task.note.title, task.note.preview]

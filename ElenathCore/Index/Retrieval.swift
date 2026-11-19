@@ -326,6 +326,20 @@ public actor Retrieval {
         return hits
     }
 
+    /// The notes for one event occurrence (front matter `event`), newest first: "Notes for this lecture".
+    /// Like every query, only from the containers the workplace may read; the calendar shows them only
+    /// where the event's own content may be read (`CalendarReach.mayReadContent(of:)`).
+    public func notes(linkedTo event: EventLink, from workplace: Workplace) async throws -> [NoteHit] {
+        var hits: [NoteHit] = []
+        for index in try await readable(from: workplace) {
+            hits += try index.notes(filter: IndexFilter(event: event), limit: 1_000).map {
+                Retrieval.hit($0, in: index.container)
+            }
+        }
+        hits.sort { Retrieval.isNewer($0.modified, than: $1.modified) }
+        return hits
+    }
+
     /// Tasks that aren't done, those in the most recently changed notes first.
     public func openTasks(from workplace: Workplace, limit: Int) async throws -> [TaskHit] {
         var hits: [TaskHit] = []

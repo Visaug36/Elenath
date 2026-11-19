@@ -87,7 +87,7 @@ private final class EventFoldersTestDisk: FileSystem, @unchecked Sendable {
     }
 }
 
-/// A unique temporary folder holding the library root ("CalendarDocument") and a sibling ("Outside") that must stay
+/// A unique temporary folder holding the library root ("Calendar") and a sibling ("Outside") that must stay
 /// untouched, plus the `EventFolders` under test.
 private struct EventFoldersSandbox {
     let base: URL
@@ -99,7 +99,7 @@ private struct EventFoldersSandbox {
     init() throws {
         let name = "IthilEventFoldersTests-\(UUID().uuidString)"
         base = FileManager.default.temporaryDirectory.appending(component: name, directoryHint: .isDirectory)
-        root = base.appending(component: "CalendarDocument", directoryHint: .isDirectory)
+        root = base.appending(component: "Calendar", directoryHint: .isDirectory)
         outside = base.appending(component: "Outside", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: nil)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true, attributes: nil)
@@ -855,9 +855,9 @@ struct EventFoldersTests {
         #expect(!folders.contains(sandbox.url("..")))
         #expect(!folders.contains(sandbox.url("../Outside")))
         #expect(!folders.contains(sandbox.url("2026-10-06/../../Outside/notes.txt")))
-        #expect(!folders.contains(sandbox.base.appending(component: "CalendarDocument 2")))
-        #expect(!folders.contains(sandbox.base.appending(component: "Library2")))
-        #expect(!folders.contains(URL(string: "https://example.com/CalendarDocument")!))
+        #expect(!folders.contains(sandbox.base.appending(component: "Calendar 2")))
+        #expect(!folders.contains(sandbox.base.appending(component: "Calendar2")))
+        #expect(!folders.contains(URL(string: "https://example.com/Calendar")!))
     }
 
     @Test func containsResolvesSymbolicLinks() throws {

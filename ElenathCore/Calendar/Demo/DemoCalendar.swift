@@ -44,7 +44,7 @@ public enum DemoCalendar {
         schedule.timed(8, "Literature Seminar", literature, day: 4, (11, 0), (12, 30), weekly: true)
         schedule.timed(9, "Physics Lecture", physics, day: 1, (14, 0), (15, 30), weekly: true, location: room)
         schedule.timed(10, "Physics Lecture", physics, day: 3, (14, 0), (15, 30), weekly: true, location: room)
-        schedule.timed(11, "CalendarDocument: essay draft", literature, day: 1, (17, 0), (18, 30))
+        schedule.timed(11, "Library: essay draft", literature, day: 1, (17, 0), (18, 30))
         schedule.timed(12, "Lunch with Mara", personal, day: 2, (12, 0), (13, 0))
         schedule.timed(13, "Physics Quiz", physics, day: 3, (10, 0), (11, 0), location: room, notes: quizNotes)
         schedule.timed(14, "Office hours", algebra, day: 4, (15, 0), (16, 0))

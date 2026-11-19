@@ -38,6 +38,8 @@ struct NoteRecord: Sendable {
     var tags: [String]
     var links: [LinkRecord]
     var tasks: [TaskRecord]
+    /// The event occurrence the note is for (front matter `event`): "Notes for this lecture".
+    var event: EventLink?
 
     /// Reads a note's bytes into what the index keeps.
     init(path: ItemPath, data: Data, info: FileInfo?, timeZone: TimeZone) {
@@ -46,6 +48,7 @@ struct NoteRecord: Sendable {
         // A file that isn't UTF-8 is still found by what can be read of it.
         body = text?.body ?? String(decoding: data, as: UTF8.self)
         noteID = text?.frontMatter?.id
+        event = text?.frontMatter?.event
         kind = text?.kind ?? .note
         created = text?.frontMatter?.created(in: timeZone) ?? info?.created
         modified = info?.modified
@@ -169,6 +172,8 @@ struct IndexFilter: Sendable {
     var kind: NoteKind?
     var modifiedAfter: Date?
     var modifiedBefore: Date?
+    /// Notes for one event occurrence.
+    var event: EventLink?
 }
 
 /// The index of one space, or of the Inbox: one SQLite database in Elenath's container.
@@ -178,7 +183,7 @@ struct IndexFilter: Sendable {
 /// `Reach` which databases a question may read.
 final class SpaceIndex {
     /// A database written with another version is emptied and filled again.
-    static let schemaVersion: Int64 = 2
+    static let schemaVersion: Int64 = 3
 
     let container: Container
     private let database: SQLiteDatabase
@@ -242,9 +247,11 @@ final class SpaceIndex {
             content_hash INTEGER NOT NULL,
             file_volume INTEGER,
             file_number INTEGER,
-            preview TEXT NOT NULL
+            preview TEXT NOT NULL,
+            event TEXT
         );
         CREATE INDEX notes_title ON notes(title_key);
+        CREATE INDEX notes_event ON notes(event);
         CREATE INDEX notes_modified ON notes(modified);
         CREATE INDEX notes_folder ON notes(folder_key);
         CREATE TABLE links (
@@ -328,6 +335,7 @@ final class SpaceIndex {
             .integer(Int64(bitPattern: record.contentHash)),
             .optional(record.identity.map { Int64(bitPattern: $0.volume) }),
             .optional(record.identity.map { Int64(bitPattern: $0.file) }), .text(record.preview),
+            .optional(record.event?.string),
         ]
         let rowID: Int64
         if let existing {
@@ -335,7 +343,7 @@ final class SpaceIndex {
                 """
                 UPDATE notes SET path = ?, path_key = ?, folder_key = ?, title = ?, title_key = ?, note_id = ?,
                     kind = ?, created = ?, modified = ?, byte_count = ?, content_hash = ?, file_volume = ?,
-                    file_number = ?, preview = ? WHERE id = ?
+                    file_number = ?, preview = ?, event = ? WHERE id = ?
                 """, values + [.integer(existing)])
             rowID = existing
             try removeDerived(rowID: rowID)
@@ -343,8 +351,8 @@ final class SpaceIndex {
             try database.run(
                 """
                 INSERT INTO notes (path, path_key, folder_key, title, title_key, note_id, kind, created, modified,
-                    byte_count, content_hash, file_volume, file_number, preview)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    byte_count, content_hash, file_volume, file_number, preview, event)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, values)
             rowID = database.lastInsertedRowID
         }
@@ -483,6 +491,10 @@ final class SpaceIndex {
         if let before = filter.modifiedBefore {
             sql.append("n.modified < ?")
             values.append(.real(before.timeIntervalSince1970))
+        }
+        if let event = filter.event {
+            sql.append("n.event = ?")
+            values.append(.text(event.string))
         }
         return (sql, values)
     }

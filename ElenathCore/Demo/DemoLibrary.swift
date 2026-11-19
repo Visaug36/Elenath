@@ -1,7 +1,8 @@
 import Foundation
 
 /// An invented library for screenshots and for trying Elenath out: Uni, a sealed Red Cross space, Ideas,
-/// and an Inbox with a few captures. Nothing in it comes from a real library.
+/// an Inbox with a few captures, and a week of events in the calendar. Nothing in it comes from a real
+/// library.
 ///
 /// Every id is fixed and every date is counted back from `now`, so equal arguments give equal libraries.
 public enum DemoLibrary {
@@ -13,7 +14,8 @@ public enum DemoLibrary {
         let clock = FixedTimeSource(now)
         let catalog = LibraryCatalog(
             root: root, safetyDirectory: safetyDirectory, fileSystem: fileSystem, timeSource: clock)
-        _ = try await catalog.create(id: LibraryID(uuid("E1E7A7E0-0000-4000-8000-000000000001")))
+        let libraryID = LibraryID(uuid("E1E7A7E0-0000-4000-8000-000000000001"))
+        _ = try await catalog.create(id: libraryID)
         let ids = Counter()
         let store = NoteStore(
             catalog: catalog, fileSystem: fileSystem, timeSource: clock, timeZone: { timeZone },
@@ -36,6 +38,9 @@ public enum DemoLibrary {
             let url = try await catalog.url(for: created.ref.path, in: container, isDirectory: false)
             try? FileManager.default.setAttributes([.modificationDate: written], ofItemAtPath: url.path)
         }
+        try await writeCalendar(
+            catalog: catalog, notes: store, libraryID: libraryID, root: root, safetyDirectory: safetyDirectory,
+            now: now, timeZone: timeZone, fileSystem: fileSystem)
         return try await catalog.open()
     }
 

@@ -123,7 +123,7 @@ struct DemoCalendarTests {
         let expected = [
             "2026-10-05 16:30-17:30 Study group",
             "2026-10-06 09:30-10:45 Literature Seminar",
-            "2026-10-06 17:00-18:30 CalendarDocument: essay draft",
+            "2026-10-06 17:00-18:30 Library: essay draft",
             "2026-10-07 12:00-13:00 Lunch with Mara",
             "2026-10-08 10:00-11:00 Physics Quiz",
             "2026-10-09 15:00-16:00 Office hours",
@@ -150,7 +150,7 @@ struct DemoCalendarTests {
             "\(event.title): \(library.subject(withID: event.subjectID)?.name ?? "none")"
         }
         #expect(subjectNames.contains("Office hours: Linear Algebra"))
-        #expect(subjectNames.contains("CalendarDocument: essay draft: Literature"))
+        #expect(subjectNames.contains("Library: essay draft: Literature"))
         #expect(subjectNames.contains("Lab report due: Biology"))
         #expect(subjectNames.contains("Mara's birthday: Personal"))
         #expect(subjectNames.contains("Midterm: Linear Algebra"))

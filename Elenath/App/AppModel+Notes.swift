@@ -284,7 +284,7 @@ extension AppModel {
 
     // MARK: - Steps: notes
 
-    private static func trashNoteStep(_ note: NoteRef) -> UndoableStep {
+    static func trashNoteStep(_ note: NoteRef) -> UndoableStep {
         UndoableStep { model in
             guard let services = model.services else { return nil }
             let trashed = try await services.notes.trash(note)

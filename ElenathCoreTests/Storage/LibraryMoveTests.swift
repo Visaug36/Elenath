@@ -27,6 +27,29 @@ struct LibraryMoveTests {
         #expect(try await catalog.open().spaces.map(\.name) == ["Uni"])
     }
 
+    @Test("The calendar moves with the library, events, backups and event folders")
+    func calendarMoves() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let store = fixture.calendarStore()
+        _ = try await store.load()
+        let calendar = CalendarFixtures.sampleCalendar()
+        try await store.save(calendar)
+        try fixture.write("slides", to: "Calendar/2026-10-06/14.00 Physics Lecture/Slides.pdf")
+        let destination = fixture.folder.child("Elsewhere/Elenath")
+
+        try LibraryMove.move(from: fixture.root, to: destination, fileSystem: LocalFileSystem())
+        #expect(TestFiles.names(in: destination).contains("Calendar"))
+        let moved = CalendarStore(
+            libraryRoot: destination, libraryID: LibraryID(), safetyDirectory: fixture.safety, knownCalendarID: nil,
+            fileSystem: LocalFileSystem(), timeSource: fixture.clock)
+        let load = try await moved.load()
+        #expect(load.document == calendar)
+        #expect(!load.isNew)
+        let slides = destination.appending(path: "Calendar/2026-10-06/14.00 Physics Lecture/Slides.pdf")
+        #expect(String(decoding: try Data(contentsOf: slides), as: UTF8.self) == "slides")
+    }
+
     @Test("A destination with something in it, or inside the library, is refused and nothing moves")
     func refused() async throws {
         let fixture = try await LibraryFixture()

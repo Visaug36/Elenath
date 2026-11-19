@@ -1,9 +1,11 @@
 import ElenathCore
 import SwiftUI
 
-/// The main window once a library is open: the sidebar, the toolbar, and whatever was opened.
+/// The main window once a library is open: the sidebar, the toolbar, and whatever was opened. While the
+/// calendar is open, the toolbar is the calendar's and the search field searches events.
 struct LibraryWindow: View {
     @Environment(AppModel.self) private var model
+    @Environment(CalendarModel.self) private var calendar
 
     var body: some View {
         @Bindable var model = model
@@ -17,10 +19,15 @@ struct LibraryWindow: View {
                 .background(Color.backgroundWindow)
                 .navigationTitle(Text(verbatim: windowTitle))
                 .toolbar {
-                    LibraryToolbar()
+                    LibraryToolbar(showsCalendar: model.route == .calendar)
                 }
         }
-        .searchable(text: $model.searchText, placement: .toolbar, prompt: Text("Search"))
+        .searchable(text: searchText, placement: .toolbar, prompt: Text("Search"))
+        .onSubmit(of: .search) {
+            if model.route == .calendar {
+                calendar.isSearchDismissed = false
+            }
+        }
         .overlay {
             if model.isJumpPanelShown {
                 JumpPanel()
@@ -31,12 +38,22 @@ struct LibraryWindow: View {
         }
     }
 
+    /// The search field: the calendar's own search while the calendar is open, the notes' everywhere else.
+    private var searchText: Binding<String> {
+        if model.route == .calendar {
+            return Binding(get: { calendar.searchText }, set: { calendar.searchText = $0 })
+        }
+        return Binding(get: { model.searchText }, set: { model.searchText = $0 })
+    }
+
     @ViewBuilder private var detail: some View {
         switch model.route {
         case .today:
             TodayView()
         case .inbox:
             InboxView()
+        case .calendar:
+            CalendarDetailView()
         case .folder(let container, let folder):
             FolderContentsView(container: container, folder: folder)
                 .id(FolderIdentity(container: container, folder: folder))
@@ -60,6 +77,7 @@ struct LibraryWindow: View {
         switch model.route {
         case .today: String(localized: "Today")
         case .inbox: String(localized: "Inbox")
+        case .calendar: String(localized: "Calendar")
         case .folder(let container, let folder): model.placeName(container, folder)
         case .tag(let tag, _): "#\(tag)"
         case .note(let note): note.title
@@ -73,18 +91,24 @@ private struct FolderIdentity: Hashable {
     var folder: ItemPath
 }
 
-/// The toolbar: back and forward, where the user is, and the amber New Note button. The search field
-/// comes from `.searchable` on `LibraryWindow`.
+/// The toolbar: back and forward, where the user is, and the amber New Note button; or, while the calendar
+/// is open, the calendar's (`CalendarToolbar`). The search field comes from `.searchable` on `LibraryWindow`.
 private struct LibraryToolbar: ToolbarContent {
+    let showsCalendar: Bool
+
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             ToolbarHistoryButtons()
         }
-        ToolbarItem(placement: .navigation) {
-            ToolbarBreadcrumb()
-        }
-        ToolbarItem(placement: .primaryAction) {
-            ToolbarNewNoteButton()
+        if showsCalendar {
+            CalendarToolbar()
+        } else {
+            ToolbarItem(placement: .navigation) {
+                ToolbarBreadcrumb()
+            }
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarNewNoteButton()
+            }
         }
     }
 }
@@ -147,7 +171,7 @@ private struct ToolbarBreadcrumb: View {
             return (note.container, note.path.folder)
         case .inbox:
             return (.inbox, .root)
-        case .today, .tag, .search:
+        case .today, .calendar, .tag, .search:
             return nil
         }
     }

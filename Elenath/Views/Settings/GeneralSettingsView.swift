@@ -38,9 +38,9 @@ private struct QuickCaptureShortcutSection: View {
                         recordingChanged(recording)
                     }
                     Button("Reset") {
-                        settings.quickCaptureHotKey = .optionShiftSpace
+                        settings.quickCaptureHotKey = .optionSpace
                     }
-                    .disabled(isRecording || settings.quickCaptureHotKey == .optionShiftSpace)
+                    .disabled(isRecording || settings.quickCaptureHotKey == .optionSpace)
                     .accessibilityLabel(Text("Reset Quick Capture Shortcut"))
                     .accessibilityHint(Text("Sets the shortcut back to ⌥⇧Space"))
                 }

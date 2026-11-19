@@ -4,7 +4,7 @@ import Foundation
 public enum LibraryMove {
     private static let log = CoreLog(category: "LibraryMove")
 
-    /// Moves Elenath's items (every space's folder, `Inbox`, and `.elenath`) from `oldRoot` into
+    /// Moves Elenath's items (every space's folder, `Inbox`, `Calendar` and `.elenath`) from `oldRoot` into
     /// `newRoot`. Loose files directly in `oldRoot` and hidden items stay where they are. On the same
     /// volume the moves are renames; across volumes each item is copied and then removed from the old
     /// place by `moveItem`. Nothing is deleted.

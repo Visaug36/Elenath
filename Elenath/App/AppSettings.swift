@@ -1,3 +1,4 @@
+import ElenathCore
 import Foundation
 import Observation
 
@@ -10,7 +11,9 @@ enum AppearanceChoice: String, CaseIterable {
 ///
 /// Every property is read once at launch and written through on change. Changing `appearance` applies it
 /// to the whole app at once (see `Appearance`). `QuickCaptureHotKeyController` observes
-/// `quickCaptureHotKey` and re-registers the global shortcut.
+/// `quickCaptureHotKey` and re-registers the global shortcut. `CalendarModel` observes `firstWeekday` and
+/// rebuilds its calendar math when it changes. The calendar's settings (default alert, first weekday, menu
+/// bar extra) are Ithil's, under Ithil's keys.
 ///
 /// In `-demo` mode the store is a throwaway suite (`LaunchOptions.makeDemoDefaults()`), so the user's own
 /// settings are never read or changed, and onboarding counts as done unless a screenshot asks for it.
@@ -21,6 +24,9 @@ final class AppSettings {
     private var storedAppearance: AppearanceChoice
     private var storedQuickCaptureHotKey: HotKeyCombo?
     private var storedHasCompletedOnboarding: Bool
+    private var storedDefaultAlert: AlertOffset?
+    private var storedFirstWeekday: Int?
+    private var storedShowsMenuBarExtra: Bool
 
     /// `skipsOnboarding` is for `-demo`, which goes straight to its sample library.
     init(defaults: UserDefaults = .standard, skipsOnboarding: Bool = false) {
@@ -29,6 +35,9 @@ final class AppSettings {
         storedAppearance = AppSettings.readAppearance(from: defaults)
         storedQuickCaptureHotKey = AppSettings.readQuickCaptureHotKey(from: defaults)
         storedHasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
+        storedDefaultAlert = AppSettings.readDefaultAlert(from: defaults)
+        storedFirstWeekday = AppSettings.readFirstWeekday(from: defaults)
+        storedShowsMenuBarExtra = defaults.object(forKey: Key.showsMenuBarExtra) as? Bool ?? true
     }
 
     /// Default `.night`.
@@ -42,8 +51,8 @@ final class AppSettings {
         }
     }
 
-    /// The global shortcut that opens Quick Capture from any app. Default ⌥⇧Space (Ithil has ⌥Space);
-    /// nil means off.
+    /// The global shortcut that opens Quick Capture from any app. Default ⌥Space (from 0.2; it was ⌥⇧Space
+    /// while Ithil had ⌥Space); nil means off. A shortcut the user recorded is kept.
     ///
     /// A stored shortcut without ⌘, ⌥ or ⌃ (which would stop that key from typing everywhere) or one that
     /// can't be read counts as the default.
@@ -59,6 +68,46 @@ final class AppSettings {
             if let data = try? JSONEncoder().encode(newValue) {
                 defaults.set(data, forKey: Key.quickCaptureHotKey)
             }
+        }
+    }
+
+    /// The alert new events get. Default 10 minutes; nil means "None".
+    var defaultAlert: AlertOffset? {
+        get { storedDefaultAlert }
+        set {
+            guard newValue != storedDefaultAlert else { return }
+            storedDefaultAlert = newValue
+            defaults.set(newValue?.minutesBefore ?? Self.noAlert, forKey: Key.defaultAlert)
+        }
+    }
+
+    /// nil follows the locale; 1 = Sunday … 7 = Saturday. Other values are treated as nil.
+    var firstWeekday: Int? {
+        get { storedFirstWeekday }
+        set {
+            let weekday = newValue.flatMap { (1...7).contains($0) ? $0 : nil }
+            guard weekday != storedFirstWeekday else { return }
+            storedFirstWeekday = weekday
+            if let weekday {
+                defaults.set(weekday, forKey: Key.firstWeekday)
+            } else {
+                defaults.removeObject(forKey: Key.firstWeekday)
+            }
+        }
+    }
+
+    /// `firstWeekday`, or the locale's when it is nil.
+    var effectiveFirstWeekday: Int {
+        firstWeekday ?? Calendar.autoupdatingCurrent.firstWeekday
+    }
+
+    /// Whether the menu bar extra is shown. Default true.
+    var showsMenuBarExtra: Bool {
+        get { storedShowsMenuBarExtra }
+        set {
+            guard newValue != storedShowsMenuBarExtra else { return }
+            storedShowsMenuBarExtra = newValue
+            defaults.set(newValue, forKey: Key.showsMenuBarExtra)
         }
     }
 
@@ -84,7 +133,13 @@ final class AppSettings {
         static let appearance = "appearance"
         static let quickCaptureHotKey = "quickCaptureHotKey"
         static let hasCompletedOnboarding = "hasCompletedOnboarding"
+        static let defaultAlert = "defaultAlertMinutes"
+        static let firstWeekday = "firstWeekday"
+        static let showsMenuBarExtra = "showsMenuBarExtra"
     }
+
+    /// Stored for "None" as the default alert, so a missing key can still mean 10 minutes.
+    private static let noAlert = -1
 
     /// Stored for a shortcut that was turned off, so a missing key can still mean the default.
     private static let hotKeyOff = "off"
@@ -101,7 +156,17 @@ final class AppSettings {
         guard let data = stored as? Data,
             let combo = try? JSONDecoder().decode(HotKeyCombo.self, from: data),
             combo.hasRequiredModifier
-        else { return .optionShiftSpace }
+        else { return .optionSpace }
         return combo
+    }
+
+    private static func readDefaultAlert(from defaults: UserDefaults) -> AlertOffset? {
+        guard let minutes = defaults.object(forKey: Key.defaultAlert) as? Int else { return .tenMinutes }
+        return minutes == noAlert ? nil : AlertOffset(minutesBefore: minutes)
+    }
+
+    private static func readFirstWeekday(from defaults: UserDefaults) -> Int? {
+        guard let weekday = defaults.object(forKey: Key.firstWeekday) as? Int else { return nil }
+        return (1...7).contains(weekday) ? weekday : nil
     }
 }

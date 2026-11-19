@@ -157,8 +157,10 @@ public enum CalendarImport {
 
     // MARK: - Merging
 
-    /// `calendar` with the subjects and events of `ithil` that it doesn't have yet.
-    static func merge(
+    /// `calendar` with the subjects and events of `ithil` that it doesn't have yet (by id, or for a subject
+    /// by name). The app merges `run`'s result into the calendar again once the files are copied, in case it
+    /// changed meanwhile.
+    public static func merge(
         _ ithil: CalendarDocument, into calendar: CalendarDocument, report: inout CalendarImportReport
     ) -> CalendarDocument {
         var merged = calendar

@@ -14,7 +14,11 @@ struct HotKeyCombo: Codable, Hashable, Sendable {
     /// For display, e.g. "Space" or "K".
     var keyName: String
 
-    /// ⌥⇧Space, Quick Capture's default. Ithil, Elenath's sibling, has ⌥Space.
+    /// ⌥Space, Quick Capture's default from 0.2, when the calendar moved in from Ithil (which had it).
+    static let optionSpace = HotKeyCombo(
+        keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(optionKey), keyName: "Space")
+
+    /// ⌥⇧Space, Quick Capture's default before 0.2, while Ithil had ⌥Space.
     static let optionShiftSpace = HotKeyCombo(
         keyCode: UInt32(kVK_Space), carbonModifiers: UInt32(optionKey | shiftKey), keyName: "Space")
 

@@ -4,18 +4,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// The Quick Capture panel's content (docs/DESIGN.md, "Quick Capture"): the text, where it will go, the
-/// files that come with it, and the key hints.
+/// files that come with it, the event the text describes when it names a date or time (⌥↩ Add to
+/// Calendar), and the key hints. A note stays the default.
 struct QuickCaptureView: View {
     static let width: CGFloat = 560
 
     @Bindable var session: QuickCaptureSession
     let onSubmit: @MainActor () -> Void
     let onCancel: @MainActor () -> Void
+    /// Adds the event the text describes; true also opens it in the calendar.
+    let onAddEvent: @MainActor (Bool) -> Void
     @Environment(AppModel.self) private var model
+    @Environment(CalendarModel.self) private var calendar
     @State private var isDropTarget = false
 
     var body: some View {
         let draft = model.captureDraft(for: session.text)
+        let eventDraft = calendar.captureEvent(for: session.text)
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "tray.and.arrow.down")
@@ -23,8 +28,10 @@ struct QuickCaptureView: View {
                     .foregroundStyle(Color.accentText)
                     .padding(.top, 2)
                     .accessibilityHidden(true)
-                CaptureTextField(session: session, onSubmit: onSubmit, onCancel: onCancel)
-                    .frame(height: session.textHeight)
+                CaptureTextField(
+                    session: session, onSubmit: onSubmit, onCancel: onCancel, onAddEvent: { onAddEvent(false) }
+                )
+                .frame(height: session.textHeight)
                 DestinationCapsule(destination: draft?.destination ?? .inbox)
             }
             .padding(.horizontal, 18)
@@ -34,6 +41,11 @@ struct QuickCaptureView: View {
                 AttachmentChips(session: session)
                     .padding(.horizontal, 18)
                     .padding(.bottom, 12)
+            }
+            if let eventDraft {
+                CaptureEventLine(draft: eventDraft) {
+                    onAddEvent(false)
+                }
             }
             footer(draft: draft)
         }
@@ -77,6 +89,77 @@ struct QuickCaptureView: View {
             Rectangle()
                 .fill(Color.separatorLine)
                 .frame(height: 1)
+        }
+    }
+}
+
+/// The event the text describes: "Thu 10:00 · Physics Quiz · Physics", with the "⌥↩ Add to Calendar" hint.
+/// The whole line is a button that adds it.
+private struct CaptureEventLine: View {
+    let draft: QuickAddDraft
+    let onAdd: @MainActor () -> Void
+    @Environment(CalendarModel.self) private var calendar
+
+    var body: some View {
+        let subject = calendar.library.subject(withID: draft.subjectID)
+        Button {
+            onAdd()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentText)
+                    .accessibilityHidden(true)
+                Text(verbatim: when)
+                    .font(.system(size: 13, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.textPrimary)
+                Text(verbatim: "·")
+                    .foregroundStyle(Color.textTertiary)
+                Text(verbatim: title)
+                    .font(Typography.body)
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+                if let subject {
+                    Text(verbatim: "·")
+                        .foregroundStyle(Color.textTertiary)
+                    SubjectDot(subject: subject)
+                    Text(verbatim: subject.name)
+                        .font(Typography.body)
+                        .foregroundStyle(Color.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text("⌥↩ Add to Calendar")
+                    .font(Typography.footnote)
+                    .foregroundStyle(Color.textTertiary)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.separatorLine)
+                .frame(height: 1)
+        }
+        .accessibilityLabel(Text("Add to Calendar: \(when), \(title)\(subject.map { ", \($0.name)" } ?? "")"))
+    }
+
+    private var title: String {
+        draft.title.isEmpty ? String(localized: "New Event") : draft.title
+    }
+
+    /// "Thu 10:00", or "Thu" for an all-day event.
+    private var when: String {
+        let zone = calendar.timeZone
+        switch draft.timing {
+        case .timed(let start, _, _):
+            let day = CalendarDate(start, in: zone)
+            return "\(EventFormatting.weekdayAbbreviation(day)) \(EventFormatting.time(start, timeZone: zone))"
+        case .allDay(let start, _):
+            return EventFormatting.weekdayAbbreviation(start)
         }
     }
 }
@@ -159,6 +242,8 @@ struct CaptureTextField: NSViewRepresentable {
     let session: QuickCaptureSession
     let onSubmit: @MainActor () -> Void
     let onCancel: @MainActor () -> Void
+    /// ⌥↩: adds the event the text describes (when it describes one).
+    var onAddEvent: @MainActor () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session)
@@ -194,6 +279,7 @@ struct CaptureTextField: NSViewRepresentable {
         textView.setAccessibilityLabel(String(localized: "Quick Capture"))
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
+        textView.onAddEvent = onAddEvent
         textView.onPasteAttachments = { [weak session] attachments in
             session?.add(attachments)
         }
@@ -206,6 +292,7 @@ struct CaptureTextField: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         textView.onSubmit = onSubmit
         textView.onCancel = onCancel
+        textView.onAddEvent = onAddEvent
         if textView.string != session.text {
             textView.string = session.text
             context.coordinator.measure()
@@ -243,6 +330,7 @@ struct CaptureTextField: NSViewRepresentable {
 final class CaptureInputView: NSTextView {
     var onSubmit: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
+    var onAddEvent: (@MainActor () -> Void)?
     var onPasteAttachments: (@MainActor ([CaptureAttachment]) -> Void)?
 
     override func viewDidMoveToWindow() {
@@ -261,6 +349,10 @@ final class CaptureInputView: NSTextView {
             }
             if modifiers == .shift {
                 insertNewlineIgnoringFieldEditor(nil)
+                return
+            }
+            if modifiers == .option {
+                onAddEvent?()
                 return
             }
         }

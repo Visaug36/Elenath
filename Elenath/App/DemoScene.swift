@@ -4,7 +4,8 @@ import CoreGraphics
 ///
 /// - `-demoAppearance night|dawn|system`
 /// - `-demoWindowSize 1280x800`: the main window's content size
-/// - `-demoScene today|note|inbox|space|search|sealed|capture|onboarding|settings`: what the window shows
+/// - `-demoScene today|note|inbox|space|search|sealed|capture|onboarding|settings|week|month|event|sealedEvent|captureEvent`:
+///   what the window shows
 struct DemoScene: Sendable, Equatable {
     /// The screens a screenshot can ask for.
     enum Screen: String, Sendable {
@@ -24,6 +25,16 @@ struct DemoScene: Sendable, Equatable {
         case onboarding
         /// The Settings window.
         case settings
+        /// The calendar's week, with the sidebar's mini month and subjects.
+        case week
+        /// The calendar's month.
+        case month
+        /// An event's details: a lecture homed in Uni, with its files and its note.
+        case event
+        /// A sealed event's details seen from outside its space: the Kept in card and Open Files.
+        case sealedEvent
+        /// Quick Capture with text that describes an event: the event line.
+        case captureEvent
     }
 
     var appearance: AppearanceChoice?

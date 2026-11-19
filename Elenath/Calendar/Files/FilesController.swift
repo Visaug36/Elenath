@@ -401,7 +401,7 @@ final class FilesController: CalendarChangeObserver {
             }
         }
         do {
-            let copied = try await FileImport.copy(
+            let copied = try await FileCopier.copy(
                 sources, into: folder, root: root, fileSystem: LocalFileSystem(), progress: report)
             return .finished(count: copied.count)
         } catch is CancellationError {

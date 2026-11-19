@@ -10,17 +10,19 @@ import ElenathCore
 /// runs on the demo library in a temporary folder.
 @MainActor
 final class DemoSelfCheck {
-    private let model: AppModel
+    let model: AppModel
+    let files: FilesController
     private let settings: AppSettings
     private var currentStep = "starting"
 
-    private struct Failure: Error, CustomStringConvertible {
+    struct Failure: Error, CustomStringConvertible {
         var description: String
     }
 
-    init(model: AppModel, settings: AppSettings) {
+    init(model: AppModel, settings: AppSettings, files: FilesController) {
         self.model = model
         self.settings = settings
+        self.files = files
         EditorCoordinator.showsCompletionList = false
         // NSApp may not exist yet while the App is being initialized.
         Task { @MainActor [weak self] in
@@ -43,6 +45,8 @@ final class DemoSelfCheck {
             try await step("capture") { try await self.capture() }
             try await step("import hostile files") { try await self.importHostileFiles() }
             try await step("rename a note behind Elenath's back") { try await self.renameInFinder() }
+            try await step("use the calendar") { try await self.useCalendar() }
+            try await step("bring in an Ithil calendar") { try await self.bringInIthil() }
             try await step("open the panels and Settings") { try await self.openPanels() }
             try await step("switch the appearance") { try await self.switchAppearance() }
             try await step("rebuild the index") { try await self.rebuildIndex() }
@@ -185,7 +189,7 @@ final class DemoSelfCheck {
 
     /// Does one of Elenath's own changes, waits for it, and fails at once, naming it, if Elenath reported
     /// an error.
-    private func act(_ name: String, _ body: () -> Void) async throws {
+    func act(_ name: String, _ body: () -> Void) async throws {
         say("SELF-CHECK   \(name)")
         body()
         try await stepsDone()
@@ -345,7 +349,7 @@ final class DemoSelfCheck {
         }
     }
 
-    private func visit(_ route: Route) async throws {
+    func visit(_ route: Route) async throws {
         model.go(to: route)
         try await settle()
     }
@@ -367,17 +371,17 @@ final class DemoSelfCheck {
     }
 
     /// Waits for Elenath's own steps (renames, moves, undo) to finish.
-    private func stepsDone() async throws {
+    func stepsDone() async throws {
         try await settle()
         try await waitFor("the step to finish", seconds: 30) { self.model.stepsInFlight == 0 }
         try await settle()
     }
 
-    private func settle(seconds: Double = 0.15) async throws {
+    func settle(seconds: Double = 0.15) async throws {
         try await Task.sleep(for: .milliseconds(Int(seconds * 1000)))
     }
 
-    private func waitFor(_ what: String, seconds: Double, _ condition: @MainActor () -> Bool) async throws {
+    func waitFor(_ what: String, seconds: Double, _ condition: @MainActor () -> Bool) async throws {
         let deadline = ContinuousClock.now + .milliseconds(Int(seconds * 1000))
         while !condition() {
             guard ContinuousClock.now < deadline else { throw Failure(description: "timed out waiting for \(what)") }
@@ -385,7 +389,7 @@ final class DemoSelfCheck {
         }
     }
 
-    private func check(_ condition: Bool, _ message: String) throws {
+    func check(_ condition: Bool, _ message: String) throws {
         if !condition {
             throw Failure(description: message)
         }
@@ -442,7 +446,7 @@ final class DemoSelfCheck {
         return nil
     }
 
-    private func say(_ line: String) {
+    func say(_ line: String) {
         FileHandle.standardOutput.write(Data((line + "\n").utf8))
     }
 }

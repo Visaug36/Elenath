@@ -38,7 +38,7 @@ struct ElenathApp: App {
         }
         var selfCheck: DemoSelfCheck?
         if options.isDemo, options.runsSelfCheck {
-            selfCheck = DemoSelfCheck(model: model, settings: settings)
+            selfCheck = DemoSelfCheck(model: model, settings: settings, files: files)
         }
         model.start()
         _settings = State(initialValue: settings)

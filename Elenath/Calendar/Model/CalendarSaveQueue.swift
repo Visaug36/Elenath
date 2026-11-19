@@ -4,7 +4,7 @@ import os
 
 private let logger = Logger(subsystem: "io.github.visaug36.Elenath", category: "CalendarSaveQueue")
 
-/// Saves library snapshots on a `LibraryStore` in the background, one at a time.
+/// Saves library snapshots on a `CalendarStore` in the background, one at a time.
 ///
 /// `CalendarModel` updates its library first and then hands the snapshot here, so the UI never waits for the
 /// disk. A snapshot that arrives while a save is running replaces any snapshot still waiting (latest
@@ -15,13 +15,13 @@ private let logger = Logger(subsystem: "io.github.visaug36.Elenath", category: "
 actor CalendarSaveQueue {
     typealias Completion = @MainActor @Sendable (_ number: Int, _ error: (any Error)?) -> Void
 
-    private let store: LibraryStore
+    private let store: CalendarStore
     private let completion: Completion
     private var pending: PendingSave?
     private var newestNumber = Int.min
     private var isSaving = false
 
-    init(store: LibraryStore, completion: @escaping Completion) {
+    init(store: CalendarStore, completion: @escaping Completion) {
         self.store = store
         self.completion = completion
     }

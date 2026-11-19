@@ -219,12 +219,11 @@ The landing screen. A header band 96 pt high with stars: "Today" (New York 26 pt
   note's title. Ticking one changes the note. "Show All" opens the full list.
 - **Recently edited**: up to six notes with the space dot, folder and a relative time (tabular).
 
-- **Up next** (from 0.2, first card): Ithil's Up next. The next event in an `AccentSoft` row (radius 7) with
-  its subject dot, title 13 pt semibold and an amber `AccentText` line "in 10 min · 14:00 · Room B204", then
-  the rest of today's events as rows (time tabular in `TextSecondary`, subject dot, title, `paperclip` + count
-  when it has files); past ones in the quieter tokens. Clicking a row opens it in the calendar. Empty: "Nothing
-  else today." Events from every space are here, sealed ones too (the calendar exception): title, time,
-  location and file count only.
+- **Up next** (from 0.2, first card): Ithil's Up next rows, the next four events. The very next one in an
+  `AccentSoft` row (radius 7) with its subject dot, title and an amber `AccentText` line "in 10 min · 14:00 ·
+  Room B204"; the others with "Tomorrow · 09:00" in `TextSecondary`. Clicking a row shows it in the calendar.
+  Empty: "Nothing coming up." "Open Calendar" at the right of the label. Events from every space are here,
+  sealed ones too (the calendar exception): title, time and location only.
 
 Today reads only spaces that aren't sealed, apart from Up next. A sealed space has the same three cards on its
 own page. Nano bot's proposals come later.
@@ -371,7 +370,7 @@ A sheet, 420 pt wide, for a new space and for editing one:
 
 Sealing or unsealing takes effect at once and can be undone.
 
-### 9. Settings (General / Spaces / Calendar / Files)
+### 9. Settings (General / Spaces / Calendar / Subjects / Files)
 
 `Settings` scene with toolbar tabs. `Form.formStyle(.grouped)`, groups on `BackgroundRaised`.
 
@@ -384,12 +383,13 @@ Sealing or unsealing takes effect at once and can be undone.
   The index: its state ("Up to date · 1,204 notes") and Rebuild Index. Diagnostics: Run Diagnostics, then the
   report in a monospaced box with Copy Report.
 
-- **Calendar** (`calendar`, from 0.2): **Subjects**, Ithil's subjects list (color swatch, name, keywords;
-  add, edit, delete), and for each a **Home** pop-up: "No home" or a space with its folder ("Uni › Physics"),
-  with "Choose Folder…". A subject whose home is missing shows `exclamationmark.triangle` in `AccentText` and
-  "Its home is gone. Its events' notes and files are hidden until you choose one." **Default alert**,
-  **First day of the week**, **Notifications** (Ithil's permission card), **Show in menu bar**, and
-  **Bring In Ithil Calendar…** (screen 13).
+- **Calendar** (`calendar`, from 0.2): **Default alert**, **First day of the week**, **Notifications**
+  (status and the button that fits), **Show in menu bar**, and **Bring In Ithil Calendar…** (screen 13).
+- **Subjects** (`circle.hexagongrid`, from 0.2): Ithil's subject cards (color swatch, name, palette and custom
+  color, Quick Add keywords; add and delete), each with a **Home** menu: "No Home", or a space, and in a space
+  that mixes one of its folders ("Uni › Physics"). A sealed space's folders are named only inside it, so its
+  home shows as the space alone. A subject whose home is gone shows `exclamationmark.triangle` in `AccentText`
+  and "Its home is gone. Its events' notes and files are hidden until you choose one."
 
 The Nano bot tab comes with Nano bot.
 
@@ -439,10 +439,14 @@ and **Subjects** (section label; a rounded checkbox filled with the subject colo
 hides that subject's events). The spaces and tags follow as usual. Ithil's "Up next" lives on Today and in the
 menu bar.
 
-**Toolbar** (replacing the breadcrumb and New Note while the calendar is open): the title "November 2026"
-(month New York semibold 20 pt, year regular `TextSecondary`), `ControlGroup` "‹ Today ›", the Day | Week |
-Month segmented picker, the search field (it searches events while the calendar is open), and the square amber
-`+` (New Event). Back and forward stay.
+**Toolbar** (replacing the breadcrumb and New Note while the calendar is open): Ithil's title "November 2026"
+(month New York semibold 26 pt, year regular `TextSecondary`), then the workplace capsule when the calendar works
+inside a space; `ControlGroup` "‹ Today ›", the Day | Week | Month segmented picker, the search field (it
+searches events while the calendar is open), and the square amber `+` (New Event). Back and forward stay.
+
+**An empty calendar** (no events and no subjects) shows a card at the bottom: `calendar.badge.plus`, "Coming
+from Ithil?" / "Bring in your events, subjects and files. Your Ithil folder stays as it is." and Bring In Ithil
+Calendar…, so someone who had Ithil finds the way in without onboarding.
 
 **Week, Day and Month views**: as Ithil's, on `BackgroundWindow` with no stars: the 56 pt header row, the 56 pt
 time gutter with tabular hour labels, 48 pt hour rows, the amber "now" pill and line, event blocks (radius 6,
@@ -465,8 +469,8 @@ holds the spaces); ⌃⌘S does.
 - **When the subject's home is missing**: the same card with `exclamationmark.triangle`, "Its home is gone" /
   "Choose a home for Physics in Settings to see this event's notes and files." and **Open Settings**.
 
-**Working in a space.** The calendar normally reads from everywhere. "Open in Red Cross" (or Calendar on a
-space's page) switches it into that space: a capsule after the title, the space's symbol in its color, its
+**Working in a space.** The calendar normally reads from everywhere. "Open in Red Cross" switches it into that
+space: a capsule after the title, the space's symbol in its color, its
 name and `xmark` ("Leave Red Cross"), on the space fill. Inside a sealed space, its own events show their notes
 and files and every other event shows only its title, time, location and file count; leaving goes back to
 everywhere. The calendar's search follows the same rules (notes only where they may be read, never files).

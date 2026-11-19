@@ -62,8 +62,20 @@ extension DemoSelfCheck {
         try check(files.lastError == nil, "copying a file into an event: \(files.lastError ?? "")")
 
         try await calendarAct("delete it") { calendar.delete(withFiles, scope: .thisEvent) }
-        try await undoAll(4)
-        try await redoAll(4)
+
+        // Each change is an undo step of its own: take them back one at a time, newest first, checking what
+        // each puts back, then redo them all.
+        try await undoCalendar("Delete Event")
+        try check(occurrence(of: event.id)?.event.location == "Room 1", "undoing the delete didn't bring it back")
+        try await undoCalendar("Move Event")
+        try check(
+            occurrence(of: event.id)?.event.timing == current.event.timing, "undoing the move didn't move it back")
+        try await undoCalendar("Edit Event")
+        try check(occurrence(of: event.id)?.event.title == "Self-check event", "undoing the edit didn't take it back")
+        try await undoCalendar("Add Event")
+        try check(calendar.library.event(withID: event.id) == nil, "undoing the add left the event")
+        try await redoCalendar("Add Event", "Edit Event", "Move Event", "Delete Event")
+        try check(calendar.library.event(withID: event.id) == nil, "redoing the delete left the event")
 
         // Working inside the sealed space, and everywhere again.
         if let sealed = model.spaces.first(where: { $0.isSealed }) {
@@ -102,7 +114,8 @@ extension DemoSelfCheck {
         renamed.name = "Self-check subject, renamed"
         try await calendarAct("rename it") { calendar.updateSubject(renamed) }
         try await calendarAct("delete it") { calendar.deleteSubject(id: subject.id) }
-        try await undoAll(1)
+        try await undoCalendar("Edit Subjects")
+        try check(calendar.library.subjects.contains { $0.id == subject.id }, "undoing the delete didn't bring it back")
 
         // The calendar's search, with and without results.
         calendar.searchText = "lecture"
@@ -119,6 +132,8 @@ extension DemoSelfCheck {
             component: "Self-check Ithil \(UUID().uuidString)", directoryHint: .isDirectory)
         try DemoLibrary.writeIthilFolder(to: folder, now: calendar.now, timeZone: calendar.timeZone)
         defer { try? FileManager.default.removeItem(at: folder) }
+        let before = calendar.library
+        var broughtIn = before
         for run in 1...2 {
             guard let calendarFolder = calendar.rootURL, let root = model.rootURL, let eventFolders = files.eventFolders
             else { throw Failure(description: "the calendar isn't open") }
@@ -132,9 +147,18 @@ extension DemoSelfCheck {
                     "the second run brought things in twice")
             }
             try await calendarAct("bring in an Ithil calendar, run \(run)") { calendar.bringIn(result.document) }
+            if run == 1 {
+                broughtIn = calendar.library
+                try check(broughtIn.events.count > before.events.count, "bringing in added no events")
+            } else {
+                try check(calendar.library == broughtIn, "the second run changed the calendar")
+            }
         }
-        try await undoAll(1)
-        try await redoAll(1)
+        // One step, also after the second run: Undo takes back all of it.
+        try await undoCalendar("Bring In Ithil Calendar")
+        try check(calendar.library == before, "undoing Bring In didn't take it all back")
+        try await redoCalendar("Bring In Ithil Calendar")
+        try check(calendar.library == broughtIn, "redoing Bring In didn't bring it all back")
     }
 
     // MARK: - Helpers
@@ -153,20 +177,20 @@ extension DemoSelfCheck {
         }
     }
 
-    private func undoAll(_ times: Int) async throws {
-        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
-        for _ in 0..<times where undoManager.canUndo {
-            let name = "undo \(undoManager.undoActionName)"
-            try await calendarAct(name) { undoManager.undo() }
+    /// Undoes the calendar changes named, newest first, failing if the next Undo is anything else.
+    private func undoCalendar(_ names: String...) async throws {
+        for name in names {
+            let undoManager = try nextUndo(is: name)
+            try await calendarAct("undo \(name)") { undoManager.undo() }
             try await stepsDone()
         }
     }
 
-    private func redoAll(_ times: Int) async throws {
-        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
-        for _ in 0..<times where undoManager.canRedo {
-            let name = "redo \(undoManager.redoActionName)"
-            try await calendarAct(name) { undoManager.redo() }
+    /// Redoes the calendar changes named, oldest first.
+    private func redoCalendar(_ names: String...) async throws {
+        for name in names {
+            let undoManager = try nextRedo(is: name)
+            try await calendarAct("redo \(name)") { undoManager.redo() }
             try await stepsDone()
         }
     }

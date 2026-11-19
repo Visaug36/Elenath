@@ -152,8 +152,12 @@ final class DemoSelfCheck {
             self.model.move(renamed, to: folder, in: container)
         }
         say("SELF-CHECK   the notes in Uni: \(demoFiles(in: space))")
-        try await undo(times: 2)
-        try await redo(times: 2)
+        try await undo("Move", "Rename")
+        let putBack = model.url(for: created.path, in: container).map {
+            FileManager.default.fileExists(atPath: $0.path)
+        }
+        try check(putBack == true, "undoing the move and the rename didn't put the note back")
+        try await redo("Rename", "Move")
         let moved = NoteRef(container: container, path: folder.appending("Self check renamed.md")!)
         try await act("move it to the Trash") { self.model.trash(moved) }
         try await undoMoveToTrash()
@@ -165,8 +169,8 @@ final class DemoSelfCheck {
         let made = model.folders(in: container).first { $0.name.hasPrefix("New Folder") }
         guard let made else { throw Failure(description: "the new folder isn't listed") }
         try await act("rename it") { self.model.renameFolder(made, in: container, to: "Self check folder") }
-        try await undo(times: 1)
-        try await redo(times: 1)
+        try await undo("Rename")
+        try await redo("Rename")
         try await act("move it to the Trash") { self.model.trashItem(ItemPath("Self check folder")!, in: container) }
         try await undoMoveToTrash()
     }
@@ -181,8 +185,11 @@ final class DemoSelfCheck {
         space.isSealed = true
         let sealed = space
         try await act("rename and seal it") { self.model.updateSpace(sealed) }
-        try await undo(times: 1)
-        try await redo(times: 1)
+        try await undo("Edit Space")
+        try check(
+            model.spaces.contains { $0.id == sealed.id && $0.name == "Self Check" },
+            "undoing the edit didn't give the space its name back")
+        try await redo("Edit Space")
         try await act("move it to the Trash") { self.model.trashSpace(sealed.id) }
         try await undoMoveToTrash()
     }
@@ -220,10 +227,8 @@ final class DemoSelfCheck {
     /// (an open question since Ithil): then it must say so plainly, naming Finder's Put Back, and drop the
     /// older undo steps instead of failing at each. Either way the log says which happened.
     private func undoMoveToTrash() async throws {
-        guard let undoManager = model.undoManager, undoManager.canUndo else {
-            throw Failure(description: "the move to the Trash can't be undone")
-        }
-        say("SELF-CHECK   undo \(undoManager.undoActionName)")
+        let undoManager = try nextUndo(is: "Move to Trash")
+        say("SELF-CHECK   undo Move to Trash")
         undoManager.undo()
         try await stepsDone()
         guard let error = model.operationError else {
@@ -305,7 +310,7 @@ final class DemoSelfCheck {
         if let offer = model.visibleLinkRepairOffer {
             model.acceptLinkRepair(offer)
             try await stepsDone()
-            try await undo(times: 1)
+            try await undo("Update Links")
         }
     }
 
@@ -354,20 +359,36 @@ final class DemoSelfCheck {
         try await settle()
     }
 
-    private func undo(times: Int) async throws {
-        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
-        for _ in 0..<times where undoManager.canUndo {
-            let name = "undo \(undoManager.undoActionName)"
-            try await act(name) { undoManager.undo() }
+    /// Undoes the steps named, newest first.
+    private func undo(_ names: String...) async throws {
+        for name in names {
+            let undoManager = try nextUndo(is: name)
+            try await act("undo \(name)") { undoManager.undo() }
         }
     }
 
-    private func redo(times: Int) async throws {
-        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
-        for _ in 0..<times where undoManager.canRedo {
-            let name = "redo \(undoManager.redoActionName)"
-            try await act(name) { undoManager.redo() }
+    /// Redoes the steps named, oldest first.
+    private func redo(_ names: String...) async throws {
+        for name in names {
+            let undoManager = try nextRedo(is: name)
+            try await act("redo \(name)") { undoManager.redo() }
         }
+    }
+
+    /// Fails unless Edit › Undo would take back the step named. Every change is an undo step of its own, so
+    /// one Undo never takes back more than one change, also when the changes came without a user event.
+    func nextUndo(is name: String) throws -> UndoManager {
+        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
+        let next = undoManager.canUndo ? "“\(undoManager.undoActionName)”" : "nothing"
+        try check(undoManager.canUndo && undoManager.undoActionName == name, "the next Undo is \(next), not “\(name)”")
+        return undoManager
+    }
+
+    func nextRedo(is name: String) throws -> UndoManager {
+        guard let undoManager = model.undoManager else { throw Failure(description: "no undo manager") }
+        let next = undoManager.canRedo ? "“\(undoManager.redoActionName)”" : "nothing"
+        try check(undoManager.canRedo && undoManager.redoActionName == name, "the next Redo is \(next), not “\(name)”")
+        return undoManager
     }
 
     /// Waits for Elenath's own steps (renames, moves, undo) to finish.

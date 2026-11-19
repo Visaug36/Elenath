@@ -1,5 +1,6 @@
 import AppKit
 import ElenathCore
+import Observation
 import SwiftUI
 
 /// "Bring in my Ithil calendar" (DESIGN.md screen 13): choose the Ithil folder, copy, check, then give the
@@ -13,11 +14,13 @@ struct BringInIthilSheet: View {
     @Environment(CalendarModel.self) private var model
     @Environment(FilesController.self) private var files
     @State private var phase: Phase = .intro
+    /// The copy's progress, reported from the import's background work.
+    @State private var progress = BringInProgress()
     @State private var work: Task<Void, Never>? = nil
 
     enum Phase {
         case intro
-        case copying(FileCopyProgress)
+        case copying
         case done(CalendarImportReport, newSubjects: [Subject])
         case failed(String)
     }
@@ -30,8 +33,8 @@ struct BringInIthilSheet: View {
             switch phase {
             case .intro:
                 intro
-            case .copying(let progress):
-                copying(progress)
+            case .copying:
+                copying(progress.value)
             case .done(let report, let newSubjects):
                 BringInResult(report: report, newSubjects: newSubjects) {
                     dismiss()
@@ -145,7 +148,9 @@ struct BringInIthilSheet: View {
             return
         }
         let before = model.library
-        phase = .copying(FileCopyProgress(totalBytes: 0, totalFiles: 0))
+        let relay = progress
+        relay.value = FileCopyProgress(totalBytes: 0, totalFiles: 0)
+        phase = .copying
         work = Task {
             let isAccessing = folder.startAccessingSecurityScopedResource()
             defer {
@@ -157,11 +162,9 @@ struct BringInIthilSheet: View {
                 let result = try await CalendarImport.run(
                     from: folder, into: before, calendarFolder: calendarFolder, libraryRoot: libraryRoot,
                     eventFolders: eventFolders, fileSystem: LocalFileSystem()
-                ) { progress in
+                ) { update in
                     Task { @MainActor in
-                        if case .copying = phase {
-                            phase = .copying(progress)
-                        }
+                        relay.value = update
                     }
                 }
                 guard !Task.isCancelled else { return }
@@ -353,4 +356,10 @@ enum BringInMessages {
             NSWorkspace.shared.open(url)
         }
     }
+}
+
+/// Where the import's progress lands: main-actor state that the background copy reports into.
+@Observable @MainActor
+final class BringInProgress {
+    var value = FileCopyProgress(totalBytes: 0, totalFiles: 0)
 }

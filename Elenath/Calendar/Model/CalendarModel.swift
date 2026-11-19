@@ -543,20 +543,15 @@ final class CalendarModel {
     /// read-only, moving), so a folder written by a newer Ithil never gets an Undo.
     private func registerRestore(of snapshot: CalendarDocument, actionName: String) {
         guard canEdit, let undoManager else { return }
-        // Without a user event (the crash check, a notification click) AppKit would put several changes in
-        // one group, and undoing it would run their inverses together. Each change is a group of its own.
-        let groupsItself = !undoManager.isUndoing && !undoManager.isRedoing && undoManager.groupingLevel == 0
-        if groupsItself {
-            undoManager.beginUndoGrouping()
-        }
-        undoManager.registerUndo(withTarget: self) { model in
-            MainActor.assumeIsolated {
-                model.restore(snapshot, actionName: actionName)
+        // Each change is a group of its own, also without a user event (Bring In after its copy, the crash
+        // check): AppKit would otherwise put it in one group with the changes after it.
+        undoManager.registerAsOwnGroup {
+            undoManager.registerUndo(withTarget: self) { model in
+                MainActor.assumeIsolated {
+                    model.restore(snapshot, actionName: actionName)
+                }
             }
-        }
-        undoManager.setActionName(actionName)
-        if groupsItself {
-            undoManager.endUndoGrouping()
+            undoManager.setActionName(actionName)
         }
     }
 

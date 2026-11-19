@@ -166,8 +166,9 @@ items, so its background is hidden and the stars run up under the title bar.
 **Sidebar** (244 pt, `BackgroundSidebar` + stars). Rows are 28 pt high with radius 7; the selected row has an
 `AccentSoft` fill and semibold text.
 
-- **Today** (`sun.horizon`) and **Inbox** (`tray`, or `tray.full` with items). The Inbox count sits at the
-  right, tabular, in a `ControlFill` capsule.
+- **Today** (`sun.horizon`), **Inbox** (`tray`, or `tray.full` with items) and **Calendar** (`calendar`). The
+  Inbox count sits at the right, tabular, in a `ControlFill` capsule. While the calendar is open, Ithil's
+  **mini month** and **subjects** sit right under the Calendar row (screen 12).
 - **Spaces** (section label 11 pt semibold `TextTertiary`): one row per space with its symbol in the space
   color and its name, and `lock.fill` (10 pt, `TextTertiary`) after the name of a sealed space. A disclosure
   chevron shows the space's folders, indented 16 pt per level. Notes are not listed in the sidebar.
@@ -218,8 +219,15 @@ The landing screen. A header band 96 pt high with stars: "Today" (New York 26 pt
   note's title. Ticking one changes the note. "Show All" opens the full list.
 - **Recently edited**: up to six notes with the space dot, folder and a relative time (tabular).
 
-Today reads only spaces that aren't sealed. A sealed space has the same three cards on its own page. Later
-phases add Nano bot's proposals and "Up next" from Ithil.
+- **Up next** (from 0.2, first card): Ithil's Up next. The next event in an `AccentSoft` row (radius 7) with
+  its subject dot, title 13 pt semibold and an amber `AccentText` line "in 10 min · 14:00 · Room B204", then
+  the rest of today's events as rows (time tabular in `TextSecondary`, subject dot, title, `paperclip` + count
+  when it has files); past ones in the quieter tokens. Clicking a row opens it in the calendar. Empty: "Nothing
+  else today." Events from every space are here, sealed ones too (the calendar exception): title, time,
+  location and file count only.
+
+Today reads only spaces that aren't sealed, apart from Up next. A sealed space has the same three cards on its
+own page. Nano bot's proposals come later.
 
 ### 3. The editor
 
@@ -291,7 +299,7 @@ or folder in the sidebar.
 Empty: `EmptyInbox`, "Inbox is empty.", "Press ⌥⇧Space anywhere to capture something." (with the current
 shortcut).
 
-### 5. Quick Capture (⌥⇧Space anywhere)
+### 5. Quick Capture (⌥Space anywhere, from 0.2)
 
 A nonactivating floating `NSPanel`, 560 pt wide, radius 14, `BackgroundRaised`. On macOS 26 the opaque fill is
 inset 2 pt over a `.glassEffect(.regular)`, so only a thin glass rim shows and every word stays on the opaque
@@ -306,6 +314,15 @@ token color.
   at the right the key hints "↩ Save", "⌘↩ Save and open", "esc Close".
 - ↩ saves, ⇧↩ starts a new line. Closing with esc keeps unsaved text for the next time.
 - Dragging files over the panel gives it the drop glow.
+- **An event line** (from 0.2): when the text reads like an event (Ithil's Quick Add parsing: "physics quiz
+  thursday 10am"), a row appears above the footer: `calendar.badge.plus` in `AccentText`, what was understood
+  as "Thu 10:00 · Physics" (13 pt, the subject dot before the subject), and at the right the hint
+  "⌥↩ Add to Calendar" (11 pt `TextTertiary`). The whole row is a button with the same action. ⌥↩ adds the
+  event, ⌥⌘↩ adds it and opens it in the calendar. ↩ still saves a note, so a note that mentions a date never
+  becomes an event by accident. VoiceOver: "Add to Calendar: Thursday 10:00, Physics Quiz, Physics".
+- **The shortcut is ⌥Space** (it was ⌥⇧Space while Ithil had ⌥Space). When it can't be registered, the
+  panel's settings and the menu bar say so: "⌥Space is in use, perhaps by Ithil. Quit Ithil and turn off its
+  Launch at Login, or choose another shortcut."
 
 ### 6. Search and Jump
 
@@ -354,7 +371,7 @@ A sheet, 420 pt wide, for a new space and for editing one:
 
 Sealing or unsealing takes effect at once and can be undone.
 
-### 9. Settings (General / Spaces / Files)
+### 9. Settings (General / Spaces / Calendar / Files)
 
 `Settings` scene with toolbar tabs. `Form.formStyle(.grouped)`, groups on `BackgroundRaised`.
 
@@ -367,7 +384,14 @@ Sealing or unsealing takes effect at once and can be undone.
   The index: its state ("Up to date · 1,204 notes") and Rebuild Index. Diagnostics: Run Diagnostics, then the
   report in a monospaced box with Copy Report.
 
-Nano bot and Ithil tabs come with those features.
+- **Calendar** (`calendar`, from 0.2): **Subjects**, Ithil's subjects list (color swatch, name, keywords;
+  add, edit, delete), and for each a **Home** pop-up: "No home" or a space with its folder ("Uni › Physics"),
+  with "Choose Folder…". A subject whose home is missing shows `exclamationmark.triangle` in `AccentText` and
+  "Its home is gone. Its events' notes and files are hidden until you choose one." **Default alert**,
+  **First day of the week**, **Notifications** (Ithil's permission card), **Show in menu bar**, and
+  **Bring In Ithil Calendar…** (screen 13).
+
+The Nano bot tab comes with Nano bot.
 
 ### 10. Onboarding (first launch)
 
@@ -387,6 +411,12 @@ slide in by 40 pt and fade (0.25 s); with Reduce Motion they only cross-fade.
    these any time." Rows to switch on or off, each with a symbol, an editable name and a Sealed switch: Uni,
    Red Cross (sealed), Ideas, Personal. Add Another…. Continue creates them.
 
+4. **Notifications** (from 0.2): "Stay on time" / "Elenath reminds you before events, even when it is
+   closed.", Ithil's permission card (explained before macOS asks), Skip or Continue.
+5. **Your calendar** (from 0.2): "Bring in your calendar" / "Have you used Ithil? Elenath can copy your events,
+   subjects and files. Your Ithil folder stays as it is." Bring In Ithil Calendar… (screen 13) and "Start With
+   an Empty Calendar" (quiet). Five step dots.
+
 A page that introduces Nano bot is added when Nano bot is.
 
 ### 11. Folder screens
@@ -397,6 +427,92 @@ As in Ithil, on the starry window background with the app icon, a New York headl
 - **Missing**: "Elenath can't find its folder", the last path in a `ControlFill` capsule, Locate Folder… and
   Choose Another Folder…. Elenath never starts over with an empty library without being asked.
 - **No library** and **Unreadable**: what was found, and what can be done.
+
+### 12. The calendar (from 0.2)
+
+Ithil's screens (Ithil 1.0.0's docs/DESIGN.md, screens 1 to 8 and 10), fitted into Elenath's window: the
+same tokens, sizes and symbols, with these differences.
+
+**Sidebar.** Under the selected Calendar row: Ithil's **mini month** ("November" in New York semibold with ‹ ›,
+weekday initials in `TextTertiary`, the visible week or month as a `ControlFill` pill, today as an amber circle)
+and **Subjects** (section label; a rounded checkbox filled with the subject color and the name; unchecking
+hides that subject's events). The spaces and tags follow as usual. Ithil's "Up next" lives on Today and in the
+menu bar.
+
+**Toolbar** (replacing the breadcrumb and New Note while the calendar is open): the title "November 2026"
+(month New York semibold 20 pt, year regular `TextSecondary`), `ControlGroup` "‹ Today ›", the Day | Week |
+Month segmented picker, the search field (it searches events while the calendar is open), and the square amber
+`+` (New Event). Back and forward stay.
+
+**Week, Day and Month views**: as Ithil's, on `BackgroundWindow` with no stars: the 56 pt header row, the 56 pt
+time gutter with tabular hour labels, 48 pt hour rows, the amber "now" pill and line, event blocks (radius 6,
+subject fill and border, title 12 pt semibold, time 11 pt, `paperclip` + file count), the 1.5 pt amber ring on
+the selected event, the all-day strip, drag to move and resize, Month's 3 rows per day and "N more". A sealed
+event's block shows `lock.fill` (9 pt) after its time. Month no longer collapses the sidebar (Elenath's sidebar
+holds the spaces); ⌃⌘S does.
+
+**Event details popover**: Ithil's (subject label, title in New York 22 pt, date and time, `mappin`, `bell`,
+`repeat`, then Files with Show in Finder and the file list with Quick Look), plus:
+- **Home**: `house` and the home as "Uni › Physics" with the space dot, or "No home · notes go to the Inbox".
+- **Notes for this event** (section label): the notes linked to this occurrence (title, first line, open on
+  click), then "New Note for This Event" (`square.and.pencil`), which makes a note in the home's folder (the
+  Inbox without a home) linked to the occurrence and opens it.
+- **When the event is sealed and the calendar isn't working in its space**: title, subject, date and time,
+  location, alert and repeat as usual; "Files · 3" with **Open Files** (`folder`, opens the folder in Finder);
+  then a `BackgroundRaised` card instead of the notes and the file list: `lock.fill` in the space color, "Kept
+  in Red Cross" (13 pt semibold) / "This event's notes, files and linked notes are sealed in its space."
+  (`TextSecondary`), and **Open in Red Cross**, which switches the calendar into that space.
+- **When the subject's home is missing**: the same card with `exclamationmark.triangle`, "Its home is gone" /
+  "Choose a home for Physics in Settings to see this event's notes and files." and **Open Settings**.
+
+**Working in a space.** The calendar normally reads from everywhere. "Open in Red Cross" (or Calendar on a
+space's page) switches it into that space: a capsule after the title, the space's symbol in its color, its
+name and `xmark` ("Leave Red Cross"), on the space fill. Inside a sealed space, its own events show their notes
+and files and every other event shows only its title, time, location and file count; leaving goes back to
+everywhere. The calendar's search follows the same rules (notes only where they may be read, never files).
+
+**Event editor popover**: Ithil's (title, date, time, the event's time zone, subject, location, alert, repeat
+with "this event or all future ones", notes, the file drop zone "Copied to Calendar › 2026-11-12 › 10.00
+Physics Quiz", Cancel and the amber Add Event or Done). For a sealed event outside its space, the Notes field is
+replaced by "Notes are kept in Red Cross." (`TextTertiary`); dropping files still works and shows the count.
+
+**Empty states**: Ithil's ("A quiet day.", "No files yet. Drop some here.", "Nothing by that name." / "No events
+match “chemistry”."), with "Press ⌘N to add something."
+
+**A space called "Calendar"** (from Elenath 0.1): instead of the calendar, the empty state "The name Calendar
+is taken" / "A space is called Calendar, the name the calendar uses now. Rename the space to open the calendar."
+with Rename Space… (amber).
+
+**Notifications** (drawn by macOS): Ithil's. Title "Physics Lecture in 10 min", body "14:00 – 15:30 · Room B204 ·
+4 files", the "Open Files" action. The same for sealed events. Identifiers start with `elenath.alert.`.
+
+**Menu bar extra** (one for everything, from 0.2): Ithil's, with `star.fill` as its template label and these rows
+under the day lists: "Capture… ⌥Space", "Inbox" with its count at the right (tabular), "Open Elenath", "Settings…
+⌘,", "Quit Elenath ⌘Q". Show in menu bar is in Settings › Calendar; it is on by default.
+
+**Shortcuts**: ⌘1 / ⌘2 / ⌘3 open Day, Week and Month from anywhere; ⌘T shows today in the calendar and opens
+Today elsewhere; ← / → go to the previous and next day, week or month; ⌘N makes a new event while the calendar
+is open (a note elsewhere); Delete deletes the selected event; ⌥⌘I opens the Inbox.
+
+### 13. Bring in my Ithil calendar (from 0.2)
+
+A sheet, 520 pt wide, `BackgroundRaised`, padding 24.
+1. "Bring in your Ithil calendar" (New York 22 pt) / "Elenath copies your events, subjects and each event's
+   files. Your Ithil folder stays exactly as it is." Choose Ithil Folder… (amber; the panel suggests
+   ~/Documents/Ithil) and Cancel.
+2. While copying: a progress bar and "Copying 12 of 40 files" (tabular), with Stop.
+3. The result: `checkmark.circle.fill` in the fern color and "Everything is in Elenath" / "Brought in 42 events,
+   5 subjects and 37 files." When something already was there: "12 events were already here; they were left
+   alone." When the counts don't match: `exclamationmark.triangle` in `AccentText`, "2 files couldn't be
+   copied" and their paths in a monospaced box with Copy List; running it again copies what's missing.
+4. **Homes**: "Where do these subjects belong?" One row per subject brought in: the subject dot and name, and
+   the Home pop-up ("No home" by default). Set Later leaves them without a home.
+5. **Ithil's alerts**: a `BackgroundRaised` card with `bell.slash`: "Ithil's own alerts are still scheduled" /
+   "To stop them: open System Settings › Notifications › Ithil and turn off Allow Notifications. Then quit
+   Ithil and turn off its Open at Login." with Open Notification Settings. Done (amber) closes the sheet.
+
+Errors: "This isn't an Ithil folder" (no `.ithil/events.json`), "This calendar was made by a newer Ithil",
+"Ithil's events.json can't be read", "That folder is part of your Elenath library".
 
 ## Screen → SwiftUI map
 
@@ -410,8 +526,11 @@ As in Ithil, on the starry window background with the app icon, a New York headl
 | Settings | `Settings` scene, `TabView`, `Form.formStyle(.grouped)`. Appearance sets `NSApp.appearance`. |
 | Empty states | `EmptyStateView`: an illustration asset, a New York headline, an SF Pro secondary line. |
 | Onboarding | One view per page, `.transition` gated by `accessibilityReduceMotion`. |
+| Calendar | Ithil's views, ported: `DayWeekView` (time grid, all-day strip, drag), `MonthView`, `CalendarSidebar` parts in `SidebarView`, `CalendarToolbar`, `EventDetailsView` and `EventEditorView` popovers, `SearchResultsView` for events. State in `CalendarModel` (`.environment`). |
+| Menu bar | `MenuBarExtra(isInserted:)` with `.menuBarExtraStyle(.window)`, Ithil's `MenuBarContent` plus Capture and Inbox rows. |
+| Bring in Ithil | `.sheet` over the window; `NSOpenPanel` for the folder; `CalendarImport` off the main thread with a progress callback. |
 
 ## Still to be designed
 
 Written here before each is built: Nano bot's panel and proposal cards, boards and frames, charts, the Sky,
-goal pages, the Ithil settings tab, and the menu bar extra.
+and goal pages.

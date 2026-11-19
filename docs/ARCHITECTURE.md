@@ -928,52 +928,85 @@ says otherwise.
 ```swift
 /// events.json: the subjects and events (Ithil's `Library`).
 public struct CalendarDocument: VersionedDocument {      // fileName "events.json", backups "events-",
-    public var id: UUID                                   // damaged files "events.corrupt-", schema 1
-    public var subjects: [Subject]
+    public var id: UUID                                   // damaged files "events.corrupt-", schema 1,
+    public var subjects: [Subject]                        // read up to 128 MB (settings files: 8 MB)
     public var events: [Event]
 }
 
 /// The calendar folder of a library: its store and its event folders.
 public actor CalendarStore {
-    public init(libraryRoot: URL, safetyDirectory: URL, knownCalendarID: UUID?, fileSystem: any FileSystem,
-                timeSource: any TimeSource)
-    public nonisolated let folder: URL                   // <library>/Calendar
-    public func load() throws -> DocumentLoad<CalendarDocument>   // creates an empty calendar the first time
-    public func save(_ document: CalendarDocument) throws
+    public init(libraryRoot: URL, libraryID: LibraryID, safetyDirectory: URL, knownCalendarID: UUID?,
+                fileSystem: any FileSystem, timeSource: any TimeSource,
+                backupInterval: TimeInterval = 15 * 60, maxBackups: Int = 50)
+    public nonisolated let folder: URL                    // <library>/Calendar
     public nonisolated let eventFolders: EventFolders     // rooted at the Calendar folder
+    public func load(readOnly: Bool = false) async throws -> CalendarLoad
+    public func save(_ document: CalendarDocument) async throws
 }
+public struct CalendarLoad {
+    public var document: CalendarDocument
+    public var recovery: RecoveryReport?                  // came back from a backup or the safety copy
+    public var isReadOnly: Bool                           // newer schema, or a read-only library
+    public var isNew: Bool                                // made just now
+    public var startedOverLostFile: Bool                  // made although event folders or backups were there
+}
+public enum CalendarStoreError { case nameTakenBySpace, notAFolder }
 ```
 
-- **The format on disk is Ithil's.** Elenath writes events.json with Ithil's keys and schema version, so
-  the `Calendar` folder stays a valid Ithil folder, and Ithil 1.0.0 could still open it. Nothing of
-  Elenath's goes into events.json.
+- **The format on disk is Ithil's.** Elenath writes events.json with Ithil's keys and schema version, byte
+  for byte as Ithil 1.0.0 does (`CalendarFormatTests.bytesAreIthils`), so the `Calendar` folder stays a
+  valid Ithil folder and Ithil 1.0.0 could still open it. Nothing of Elenath's goes into events.json.
 - **The first launch with a calendar** makes `Calendar/.ithil/events.json` with no subjects and no events.
-  A library made by Elenath 0.1 gets its `Calendar` folder then. A top-level folder called `Calendar`
-  that isn't a calendar (no `.ithil`) is never a space; it is offered to the user to rename.
+  A library made by Elenath 0.1 gets its `Calendar` folder then. `load(readOnly: true)` (a library from a
+  newer Elenath) makes, recovers and writes nothing.
+- **A space called "Calendar"** made by Elenath 0.1 (a `.space` folder and no `.ithil`) stays a space, so
+  nothing in it leaves the sidebar: `LibrarySnapshot.spaceNamedCalendar` names it, `load` throws
+  `nameTakenBySpace`, and the app asks the user to rename it. A new space can't take the name, and a
+  space put back from the Trash under it becomes "Calendar 2".
+- **Never through a link:** a `Calendar` that is a link or a file is refused (`notAFolder`), and the
+  library folder is never recreated.
 - **Backups, the safety copy and recovery** are `DocumentStore`'s: `SafetyCopies/<library id>/` holds the
-  calendar's safety copy as `<calendar id>.json`, beside the spaces'.
+  calendar's safety copy as `<calendar id>.json`, beside the spaces'. The calendar's id is kept in
+  library.json (`CalendarSettings.calendarID`), so the safety copy is found when the calendar's own
+  folder is gone. With nothing to recover from, an empty calendar starts and `startedOverLostFile` says so.
+- **The watcher** (`LibraryChange`): `reloadsCalendar` when `.ithil/events.json` changed (or the folder
+  came or went), `calendarFiles` when anything in an event folder did. Backups and `.DS_Store` cost
+  nothing.
+- **Markers** are read up to 64 KB, never through a link.
 
 ### Subjects and their homes
 
 ```swift
-/// Where a subject's notes go and where its event files are indexed: a space and a folder in it.
-public struct SubjectHome: Codable, Hashable, Sendable {
+/// Where a subject's notes go and where its events' files belong: a space and a folder in it.
+public struct SubjectHome: Hashable, Sendable {
     public var space: SpaceID
-    public var folder: ItemPath                           // root when empty
+    public var folder: ItemPath                           // root for the top of the space
 }
+public enum SubjectHomeEntry { case none, home(SubjectHome), unreadable }
 /// Elenath's own calendar settings, kept in library.json under settings["calendar"], so events.json
-/// stays Ithil's.
-public struct CalendarSettings: Codable, Hashable, Sendable {
-    public var homes: [UUID: SubjectHome]                 // by subject id
+/// stays Ithil's. Keys this version doesn't know are kept.
+public struct CalendarSettings: Hashable, Sendable {
+    public var calendarID: UUID?
+    public private(set) var homes: [UUID: SubjectHome]    // by subject id
     public init(from settings: [String: JSONValue])
+    public func entry(forSubject: UUID?) -> SubjectHomeEntry
+    public mutating func setHome(_ home: SubjectHome?, forSubject: UUID)
     public func written(into settings: inout [String: JSONValue])
 }
+// LibraryCatalog: calendarSettings(), saveCalendarSettings(_:); LibrarySnapshot.calendarSettings
 ```
 
 - A subject without a home, and an event without a subject, have **no home**: never sealed, and their notes
   go to the Inbox.
-- A home whose space is gone counts as no home.
+- **A home that can't be used fails closed.** An entry that can't be read, or whose space is gone, may have
+  named a sealed space: the subject's events are read from nowhere (`CalendarReach.hasMissingHome`) until
+  the user gives the subject a home again in Settings. Their notes go to the Inbox meanwhile.
+- A home folder through a hidden, attachments or board folder reads as the top of the space.
 - **Sealing follows the home.** An event whose subject's home is a sealed space is a sealed event.
+- **Notes for an occurrence:** a note's front matter `event` (`EventLink`: the event's id and the
+  occurrence's original day) links it to one occurrence. The index keeps it (schema 3);
+  `Retrieval.notes(linkedTo:from:)` finds them through `Reach`, and `NoteStore.create(…, event:)` makes one
+  in the subject's home folder ("Notes for this lecture").
 
 ### The sealing exception
 
@@ -988,46 +1021,80 @@ The calendar is the one deliberate exception to sealing (CLAUDE.md, "Spaces"):
 - `CalendarReach` is the calendar's one decision point, beside `Reach`:
 
 ```swift
-public struct CalendarReach: Sendable {
-    public init(workplace: Workplace, spaces: [Space], homes: CalendarSettings)
+public struct CalendarReach: Hashable, Sendable {
+    public init(workplace: Workplace, spaces: [Space], settings: CalendarSettings)
+    public func home(of event: Event) -> SubjectHome?
+    public func hasMissingHome(_ event: Event) -> Bool
     /// Whether an event's notes, files and linked notes may be read from the workplace.
     public func mayReadContent(of event: Event) -> Bool
+    public func notes(of event: Event) -> String?                                  // nil where sealed
+    public func files(for occurrence: Occurrence, in folders: EventFolders) async -> [EventFile]?
+    public func matches(_ event: Event, query: String) -> Bool
     /// The calendar's own search: title and location for every event; notes only where they may be read.
     public func search(_ document: CalendarDocument, query: String, now: Date,
                        expander: OccurrenceExpander) -> [Occurrence]
 }
 ```
 
-- **Event files are indexed into the home space** (by name in 0.2, by text from 0.3), so `Retrieval` and
-  `Reach` apply to them like any file of that space; files of events without a home go nowhere.
+| The event | Its content is read from |
+|---|---|
+| no subject, or a subject without a home | where the spaces that mix are read: everywhere, an unsealed space |
+| homed in a space | where `Reach` allows that space |
+| homed in a space that is gone, or whose entry can't be read | nowhere |
+
+- The app shows an event's notes, file names and linked notes only through `CalendarReach`, and the file
+  count and "Open Files" (Finder) for every event.
+- **Event files join the main search in 0.3** (phase 5), by name and by text, indexed into the home space
+  so `Retrieval` and `Reach` apply to them like any file of that space; files of events without a home go
+  nowhere. In 0.2 they are found from the calendar (the event's Files), and the leak tests check that they
+  never reach the index.
 - The leak tests (`SealingLeakTests`) prove both halves: a marker in a sealed event's notes and in its files'
-  names never comes out of any query or calendar search from outside, and its title, time and location do
-  show on the calendar from everywhere.
+  names never comes out of any `CalendarReach` query or `Retrieval` query from outside, nothing of other
+  events' content comes out inside the sealed space, and every event's title, time, location and file
+  count show from every workplace. `scripts/check-rules.sh` (rule 4b) fails when a public query of
+  `CalendarReach` isn't asked there.
 
 ### Bringing in an Ithil calendar
 
 ```swift
 public struct CalendarImportReport: Hashable, Sendable {
-    public var subjects: Int, events: Int, folders: Int, files: Int     // brought in this time
-    public var alreadyThere: Int                                         // events with an id already present
-    public var countsMatch: Bool                                         // checked after copying
+    public var subjectsInSource, eventsInSource, foldersInSource, filesInSource: Int
+    public var subjectsAdded, eventsAdded, filesCopied: Int                 // brought in this time
+    public var subjectsAlreadyThere, eventsAlreadyThere, filesAlreadyThere: Int
+    public var readFromBackup: Bool
+    public var missingFiles: [String]                                       // not there after copying
+    public var countsMatch: Bool                                             // everything is there
 }
 public enum CalendarImport {
-    /// Copies an Ithil folder's events, subjects and event folders into the library's calendar. The Ithil
-    /// folder is only read. Running it again brings in nothing twice.
-    public static func run(from ithilFolder: URL, into calendar: CalendarStore,
-                           fileSystem: any FileSystem) async throws -> CalendarImportReport
+    /// Reads an Ithil folder, copies its event folders into the calendar's folder, and returns the
+    /// calendar with its subjects and events merged in, for the app to save as one change.
+    public static func run(from ithilFolder: URL, into calendar: CalendarDocument, calendarFolder: URL,
+                           libraryRoot: URL, eventFolders: EventFolders, fileSystem: any FileSystem,
+                           progress: @escaping @Sendable (FileCopyProgress) -> Void) async throws
+        -> CalendarImportResult                                             // document + report
 }
+public enum CalendarImportError { case notAnIthilFolder, newerSchema(found:supported:), unreadable,
+                                  insideLibrary }
 ```
 
-- **Read-only source:** nothing is written inside the Ithil folder; its events.json is read, never
-  recovered or migrated in place. A newer schema is refused with a message.
+- **Read-only source:** nothing is written inside the Ithil folder, and links in it are never followed;
+  its events.json is read, never recovered or migrated in place. A damaged one is read around from its
+  newest readable backup. A newer schema is refused. The library itself, a folder inside it or one that
+  holds it is refused.
 - **Copy, check, never duplicate:** subjects and events are merged by id (an id already in Elenath's
-  calendar is left alone), event folders are copied with their markers and files (`FileCopier`, never
-  moved), and afterwards the counts are compared with the source.
+  calendar is left alone; a subject the calendar already had under the same name is used instead of a
+  second one). Event folders are copied file by file (`FileCopier`, never moved): into the calendar's
+  folder for the same occurrence when there is one (found by its marker, wherever it was renamed), else
+  under their own name, or " 2" when that name is another event's. Markers are read and written anew;
+  other hidden files are left behind; a file that is already there is never overwritten. A file that
+  can't be copied is listed and the rest go on. Afterwards every file is looked for and the counts are
+  compared.
 - **Ithil's alerts:** Ithil scheduled its own notifications. The app tells the user how to stop them (quit
   Ithil and turn off its notifications in System Settings, or delete Ithil), since Elenath can't reach
   another app's alerts.
+- **The demo** (`DemoLibrary`) has Ithil's sample week with each subject homed (a sealed Red Cross subject
+  among them), event files, a note for one lecture, and `DemoLibrary.writeIthilFolder(to:now:timeZone:)`
+  writes a separate Ithil folder to try bringing in.
 
 ## Later phases
 

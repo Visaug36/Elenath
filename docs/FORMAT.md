@@ -122,15 +122,17 @@ to map them.
 "settings" : {
   "calendar" : {
     "homes" : {
-      "8E2F…" : { "space" : "0E6C3E2F-6F0B-4C55-9A1E-1D6A2B7C8D90", "folder" : "Physics" }
-    }
+      "8E2F…" : { "folder" : "Physics", "space" : "0E6C3E2F-6F0B-4C55-9A1E-1D6A2B7C8D90" }
+    },
+    "id" : "4954484C-…"
   }
 }
 ```
 
 | Key | Type | Meaning |
 |---|---|---|
-| `calendar.homes` | object | each subject's home, by the subject's id in events.json: the `space` (a space.json id) and the `folder` in it (a path; `""` for the top of the space). Notes for its events go there, its events' files are indexed into that space, and its events are sealed when that space is. A subject without a home, or whose space is gone, has none. |
+| `calendar.id` | UUID | the calendar's own id (events.json's `id`), so its safety copy can be found when the `Calendar` folder is gone |
+| `calendar.homes` | object | each subject's home, by the subject's id in events.json: the `space` (a space.json id) and the `folder` in it (a path; `""` for the top of the space). Notes for its events go there, its events' files belong to that space, and its events are sealed when that space is. A subject without an entry has no home: its events are never sealed and their notes go to the Inbox. An entry that can't be read, or whose space is gone, fails closed: the events' notes and files are shown nowhere until the subject gets a home again. |
 
 ## space.json
 

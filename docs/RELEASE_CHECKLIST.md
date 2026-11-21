@@ -117,6 +117,9 @@ with the reason it stays. Cover at least:
       inside Red Cross. "New Note for This Event" makes the note in the subject's home.
 - [ ] The menu bar extra: today and the next event, Open Files, Capture, the Inbox count; turning it off in
       Settings.
+- [ ] Settings › Subjects: deleting a subject homed in Red Cross that has events says why it can't be deleted
+      yet; one without events, or homed in an open space, is deleted and its events stay. "red cross: debrief
+      sat 9pm" in Quick Capture shows the Red Cross subject, and ⌥↩ makes the event there.
 
 ## 6. Only a real Mac can tell
 

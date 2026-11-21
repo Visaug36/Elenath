@@ -132,7 +132,10 @@ to map them.
 | Key | Type | Meaning |
 |---|---|---|
 | `calendar.id` | UUID | the calendar's own id (events.json's `id`), so its safety copy can be found when the `Calendar` folder is gone |
-| `calendar.homes` | object | each subject's home, by the subject's id in events.json: the `space` (a space.json id) and the `folder` in it (a path; `""` for the top of the space). Notes for its events go there, its events' files belong to that space, and its events are sealed when that space is. A subject without an entry has no home: its events are never sealed and their notes go to the Inbox. An entry that can't be read, or whose space is gone, fails closed: the events' notes and files are shown nowhere until the subject gets a home again. |
+| `calendar.homes` | object | each subject's home, by the subject's id in events.json: the `space` (a space.json id) and the `folder` in it (a path; `""` for the top of the space). Notes for its events go there, its events' files belong to that space, and its events are sealed when that space is. A subject without an entry has no home: its events are never sealed and their notes go to the Inbox. An entry that can't be read (an empty object `{}` is written for one on purpose), two entries for one subject (keys that differ only in letter case), or an entry whose space is gone fails closed: the events' notes and files are shown nowhere until the subject gets a home again. |
+| `calendar.foundUnreadable` | any | what Elenath found in place of `calendar` or `calendar.homes` when that wasn't an object, kept as it was. Every subject of the calendar then got an entry that can't be read, so nothing that may have been sealed opens by accident. |
+
+When `calendar` or `calendar.homes` isn't an object, every subject's home counts as unreadable until the calendar is next opened, and the value is written back unchanged until then.
 
 ## space.json
 

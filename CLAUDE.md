@@ -199,6 +199,34 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **The review for 0.2.0 (2026-11-21).** Two independent reviewers (files and untrusted input; sealing,
+  privacy and the repository) found 15 problems; the usage limit stopped them once, and they were resumed.
+  Each is fixed, with a test that fails without the fix (checked by undoing each fix in a scratch copy), or
+  a crash-check step. The rules that came out of it:
+  - **Bring In** copies hidden files under their own names and counts them (`FileCopier.Naming.exact`);
+    only markers, `.DS_Store`, AppleDouble and icon files and unfinished copies stay behind. A folder Ithil
+    never marked gets the marker of the one occurrence whose folder it is. `run` returns Ithil's calendar
+    (`source`), and the app merges only that into the calendar as it is when the copy ends. `.ithil` and
+    `backups` must be real folders (read-only opening too); copies are rooted at the Calendar folder.
+  - **The expander** looks back at most 366 days and keeps the latest 32 occurrences of a series that last
+    into a range: one event lasting centuries had expanded its whole series (739,942 occurrences a week).
+  - **Fail closed:** a `calendar` or `homes` that isn't an object makes every subject's home unreadable;
+    the calendar settles it when it opens (an unreadable `{}` entry per subject, the value kept under
+    `foundUnreadable`). Two entries for one subject are unreadable. Calendar settings are backed up at once
+    when they change.
+  - **Deleting a subject** whose events would come out of a seal (sealed, gone or unreadable home) is
+    refused with an explanation, instead of keeping per-event homes in library.json (a new format key that
+    could itself be damaged). The editor doesn't change the subject of an event whose notes it hides.
+  - **The sidebar** remembers the workplace its tags and folders were read for and clears sealed ones at
+    once when the calendar's workplace changes (the calendar tells the window).
+  - **Quick Capture's event** reads the first line after a space prefix, at most 300 characters
+    (`CaptureEvent`), takes a subject homed in that space, and is refused for a sealed space without one.
+  - **A newer events.json** arriving while open makes the calendar read-only; recovery is shown on reload.
+  - **Moving the library** refuses while files copy into events and waits for the calendar's saves and its
+    folders' disk work. Not covered by an automated test: the demo can't move its library. It is on the
+    user's checklist with the rest of the move.
+  - **check-rules:** rule 4 and 4b match a query by name and first argument label (each overload needs its
+    own leak test); rule 5 also covers location, notes, keywords and `describing`.
 - **Phase 4 as built: the calendar (2026-11-19).** Ithil 1.0.0 moved in, ported, not rewritten: IthilCore and
   its tests into `ElenathCore/Calendar` (Ithil's `LibraryCodecTests` too, with a byte-for-byte golden file of
   events.json), Ithil's app layer into `Elenath/Calendar` (its `AppModel` is `CalendarModel`). The rules that

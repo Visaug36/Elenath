@@ -698,6 +698,13 @@ public struct CaptureDraft: Hashable, Sendable {
 public struct CaptureParser: Sendable {
     public init(spaces: [Space])
     public func parse(_ text: String, now: Date, timeZone: TimeZone) -> CaptureDraft?   // nil for blank text
+    public func split(_ text: String) -> (destination: CaptureDestination, content: String)?
+}
+/// Quick Capture's event (⌥↩), in ElenathCore/Calendar/QuickAdd.
+public enum CaptureEvent {
+    public enum Reading { case event(QuickAddDraft), noSubjectIn(SpaceID) }
+    public static func read(_ text: String, spaces: [Space], subjects: [Subject], settings: CalendarSettings,
+                            parse: (String) -> QuickAddDraft?) -> Reading?
 }
 ```
 
@@ -705,6 +712,11 @@ public struct CaptureParser: Sendable {
   exam`) goes straight to that space, sealed ones included: it is the user's own choice, not retrieval. The
   longest match wins. Anything else goes to the Inbox.
 - A pasted link stays a link. Elenath can't fetch pages.
+- **An event goes where the text says** (`CaptureEvent`): Quick Add reads only the first line after the
+  space's name, at most 300 characters, so the name isn't part of the event and a pasted page is never
+  read at every keystroke. The event's subject is one whose home is that space (Quick Add's, if it lives
+  there, else the first that does). Text for a sealed space where no subject lives gives no event, since
+  it would have no home and show everywhere; the panel says so.
 
 ## Import (`ElenathCore/Import`): built
 
@@ -919,6 +931,11 @@ Ithil's tests come across into `ElenathCoreTests/Calendar` the same way. Its con
 of Ithil 1.0.0: Model, Dates, Storage, Quick Add, Notifications, Files) hold unchanged unless this section
 says otherwise.
 
+One change to Ithil's Dates, found in the review for 0.2.0: a repeating event whose occurrences last for
+years (only a hand-edited or damaged events.json has one) expanded its whole series for every query, which
+froze the calendar. `OccurrenceExpander` now looks back at most `maximumLookbackDays` (366) for occurrences
+that last into a range, and keeps the latest `maximumSpanningOccurrences` (32) of them per series.
+
 ### The calendar in the library
 
 ```
@@ -995,6 +1012,8 @@ public struct CalendarSettings: Hashable, Sendable {
     public init(from settings: [String: JSONValue])
     public func entry(forSubject: UUID?) -> SubjectHomeEntry
     public mutating func setHome(_ home: SubjectHome?, forSubject: UUID)
+    public var isDamaged: Bool                            // settings.calendar or its homes isn't an object
+    public mutating func settleDamage(subjects: [UUID]) -> Bool
     public func written(into settings: inout [String: JSONValue])
 }
 // LibraryCatalog: calendarSettings(), saveCalendarSettings(_:); LibrarySnapshot.calendarSettings
@@ -1002,9 +1021,23 @@ public struct CalendarSettings: Hashable, Sendable {
 
 - A subject without a home, and an event without a subject, have **no home**: never sealed, and their notes
   go to the Inbox.
-- **A home that can't be used fails closed.** An entry that can't be read, or whose space is gone, may have
-  named a sealed space: the subject's events are read from nowhere (`CalendarReach.hasMissingHome`) until
-  the user gives the subject a home again in Settings. Their notes go to the Inbox meanwhile.
+- **A home that can't be used fails closed.** An entry that can't be read, two entries for one subject
+  (keys that differ only in case), or a home whose space is gone may have named a sealed space: the
+  subject's events are read from nowhere (`CalendarReach.hasMissingHome`) until the user gives the subject
+  a home again in Settings. Their notes go to the Inbox meanwhile.
+- **Damaged settings fail closed too.** When `settings.calendar` or its `homes` isn't an object at all,
+  every subject's home reads as unreadable (`isDamaged`) and the value is written back as it was found.
+  When the calendar opens, the app settles it (`settleDamage(subjects:)`): each of the calendar's subjects
+  gets an entry that can't be read, so its events stay sealed until it gets a home again, and what was
+  found is kept under `foundUnreadable`. A subject made later has no home, as usual.
+- **A home is backed up at once.** `saveCalendarSettings` writes a backup of the new library.json whenever
+  the settings change, as a space's seal does: a library recovered from a backup never forgets a sealed
+  home.
+- **Deleting a subject never unseals its events.** Its events would have no home, and an event without a
+  home is read wherever the spaces that mix are. So a subject with events whose home is a sealed space, a
+  space that is gone or an entry that can't be read isn't deleted (`CalendarReach.deletingSubjectWouldUnseal`);
+  Settings says why, and its events need another subject first. The editor doesn't change the subject of
+  an event whose notes it doesn't show.
 - A home folder through a hidden, attachments or board folder reads as the top of the space.
 - **Sealing follows the home.** An event whose subject's home is a sealed space is a sealed event.
 - **Notes for an occurrence:** a note's front matter `event` (`EventLink`: the event's id and the
@@ -1037,6 +1070,8 @@ public struct CalendarReach: Hashable, Sendable {
     /// The calendar's own search: title and location for every event; notes only where they may be read.
     public func search(_ document: CalendarDocument, query: String, now: Date,
                        expander: OccurrenceExpander) -> [Occurrence]
+    /// Whether deleting the subject would bring its events' content out of a seal.
+    public func deletingSubjectWouldUnseal(_ subject: UUID, in document: CalendarDocument) -> Bool
 }
 ```
 
@@ -1075,24 +1110,35 @@ public enum CalendarImport {
     public static func run(from ithilFolder: URL, into calendar: CalendarDocument, calendarFolder: URL,
                            libraryRoot: URL, eventFolders: EventFolders, fileSystem: any FileSystem,
                            progress: @escaping @Sendable (FileCopyProgress) -> Void) async throws
-        -> CalendarImportResult                                             // document + report
+        -> CalendarImportResult                     // document, source (Ithil's calendar as read), report
+    /// Merges what `run` read into the calendar as it is once the files are copied: only Ithil's
+    /// subjects and events, so nothing deleted meanwhile comes back.
+    public static func merge(_ result: CalendarImportResult, into current: CalendarDocument)
+        -> CalendarImportResult
 }
 public enum CalendarImportError { case notAnIthilFolder, newerSchema(found:supported:), unreadable,
                                   insideLibrary }
 ```
 
-- **Read-only source:** nothing is written inside the Ithil folder, and links in it are never followed;
-  its events.json is read, never recovered or migrated in place. A damaged one is read around from its
+- **Read-only source:** nothing is written inside the Ithil folder, and links in it are never followed
+  (a `.ithil` or `backups` that is a link isn't read); its events.json is read, never recovered or
+  migrated in place. A damaged one is read around from its
   newest readable backup. A newer schema is refused. The library itself, a folder inside it or one that
   holds it is refused.
 - **Copy, check, never duplicate:** subjects and events are merged by id (an id already in Elenath's
   calendar is left alone; a subject the calendar already had under the same name is used instead of a
   second one). Event folders are copied file by file (`FileCopier`, never moved): into the calendar's
   folder for the same occurrence when there is one (found by its marker, wherever it was renamed), else
-  under their own name, or " 2" when that name is another event's. Markers are read and written anew;
-  other hidden files are left behind; a file that is already there is never overwritten. A file that
-  can't be copied is listed and the rest go on. Afterwards every file is looked for and the counts are
-  compared.
+  under their own name, or " 2" when that name is another event's. A folder Ithil never marked (one the
+  user made in Finder) belongs to the one occurrence whose folder it is, so a second run finds it.
+  Markers are read and written anew. Every other file comes along under its own name, hidden ones
+  included (a project's `.git`, an `.env`), and is counted; left behind are only the system's
+  `.DS_Store`, AppleDouble and custom-icon files and copies that never finished. A file that is already
+  there is never overwritten. Nothing is written outside the calendar's folder, even through a link
+  planted in it. A file that can't be copied is listed and the rest go on. Afterwards every file is
+  looked for and the counts are compared.
+- **Merged when the copy ends.** The app merges `result.source` into the calendar as it is then
+  (`merge(_:into:)`), as one undo step: something deleted while the files were copied stays deleted.
 - **Ithil's alerts:** Ithil scheduled its own notifications. The app tells the user how to stop them (quit
   Ithil and turn off its notifications in System Settings, or delete Ithil), since Elenath can't reach
   another app's alerts.

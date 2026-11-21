@@ -29,7 +29,8 @@ Ithil's code, tests and screens came across as they were, fitted into Elenath's 
 - **Sealed spaces and the calendar**: events from every space show on the calendar, Today, notifications and
   the menu bar, sealed ones too, by title, time, location and file count. Their notes, files' names and
   linked notes stay in their space: outside it, an event says where they are kept, with Open Files and
-  "Open in Red Cross".
+  "Open in Red Cross". A subject whose events are sealed can't be deleted while that would bring them out
+  of the seal: give them another subject first. Quick Capture's "red cross: …" makes an event sealed there.
 - **Up next** on Today.
 - **Quick Capture adds events**: when the text names a date or a time ("physics quiz thursday 10am"), the
   panel shows what it understood ("Thu 10:00 · Physics Quiz · Physics"); ⌥↩ adds it to the calendar, ⌥⌘↩ adds
@@ -45,6 +46,13 @@ Ithil's code, tests and screens came across as they were, fitted into Elenath's 
   opens Today elsewhere; ⌘← and ⌘→ step the calendar; ⌘N makes a new event while the calendar is open and a
   note elsewhere; the Inbox is ⌥⌘I.
 - **A space called "Calendar"** made by Elenath 0.1 stays a space; the calendar asks you to rename it.
+
+### Fixed
+
+- **Undo takes back one change at a time**, also a change that finishes without a key press or click.
+  Before, several such changes could share one Undo.
+- Before this release, two independent reviewers went through the whole app and repository again for errors
+  and security problems, and everything they found is fixed.
 
 ## [0.1.1] - 2026-11-16
 

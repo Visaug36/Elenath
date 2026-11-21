@@ -361,6 +361,10 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-21: **0.2.0 published; phase 4 (the calendar) done.** Merged (https://github.com/Visaug36/Elenath/pull/4)
+  and published by the Release workflow as a prerelease (https://github.com/Visaug36/Elenath/releases/tag/v0.2.0,
+  `Elenath-0.2.0.zip` with its SHA-256). The user was given what to try (docs/RELEASE_CHECKLIST.md, section 5).
+  Next: phase 5, meaning, with its contracts in docs/ARCHITECTURE.md first.
 - 2026-11-21: **Phase 4 (the calendar) built, reviewed and green; 0.2.0 dated.** Ithil 1.0.0 is in: its
   core and tests ported, its views fitted into Elenath's window, the calendar in `<library>/Calendar`,
   Bring In, subject homes and the sealing exception. The release review (two independent reviewers) found

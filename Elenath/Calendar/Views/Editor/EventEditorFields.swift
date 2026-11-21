@@ -10,6 +10,14 @@ struct EventEditorFields: View {
     /// shows the notes.
     var notesKeptIn: String? = nil
 
+    /// Why the subject can't be changed here, when the notes aren't shown.
+    private var subjectLockedHelp: String? {
+        guard let notesKeptIn else { return nil }
+        return notesKeptIn.isEmpty
+            ? String(localized: "Its subject can be changed where its notes are shown.")
+            : String(localized: "Its subject can be changed inside \(notesKeptIn).")
+    }
+
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
             GridRow {
@@ -41,7 +49,10 @@ struct EventEditorFields: View {
             }
             GridRow {
                 EditorRowLabel(title: "Subject")
+                // Where the notes aren't shown, a new subject could take notes nobody saw out of their seal.
                 EditorSubjectPicker(subjectID: $draft.subjectID)
+                    .disabled(notesKeptIn != nil)
+                    .help(subjectLockedHelp ?? "")
             }
             GridRow {
                 EditorRowLabel(title: "Location")

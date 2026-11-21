@@ -159,6 +159,8 @@ final class AppModel {
     /// Bumped whenever a library opens; work started for an earlier library is dropped.
     @ObservationIgnored private var librarySession = 0
     @ObservationIgnored private var sidebarGeneration = 0
+    /// The workplace the sidebar's tags and sealed folders were last read for.
+    @ObservationIgnored private var sidebarWorkplace: Workplace = .everywhere
     @ObservationIgnored private var savedFolder: SavedFolder?
     /// The folder of the last open attempt, for "Start a New Library Here".
     @ObservationIgnored private var attemptedRoot: URL?
@@ -308,7 +310,6 @@ final class AppModel {
     }
 
     private func setRoute(_ destination: Route) {
-        let previousWorkplace = workplace
         route = destination
         if case .note(let note) = destination {
             if session?.ref != note {
@@ -324,7 +325,13 @@ final class AppModel {
             // Leaving the results by other means than opening one ends the search.
             searchText = ""
         }
-        if workplace != previousWorkplace {
+        workplaceMayHaveChanged()
+    }
+
+    /// The sidebar's tags and folders follow the workplace: after a new route, and when the calendar starts
+    /// working inside a space or everywhere again (its workplace is the window's while it is shown).
+    func workplaceMayHaveChanged() {
+        if workplace != sidebarWorkplace {
             refreshSidebar()
         }
     }
@@ -424,6 +431,13 @@ final class AppModel {
         sidebarGeneration += 1
         let generation = sidebarGeneration
         let workplace = workplace
+        if workplace != sidebarWorkplace {
+            // What was read for another workplace may be a sealed space's: it goes at once, before the lists
+            // for this one arrive.
+            tags = []
+            folders = folders.filter { id, _ in self.space(id)?.isSealed != true }
+            sidebarWorkplace = workplace
+        }
         Task {
             let count = (try? await services.retrieval.inboxCount()) ?? 0
             var folders: [SpaceID: [ItemPath]] = [:]
@@ -600,6 +614,7 @@ final class AppModel {
         spaces = []
         folders = [:]
         tags = []
+        sidebarWorkplace = .everywhere
         inboxCount = 0
         rootURL = nil
         librarySession += 1

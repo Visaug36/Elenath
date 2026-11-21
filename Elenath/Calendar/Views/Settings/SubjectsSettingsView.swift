@@ -12,6 +12,8 @@ struct SubjectsSettingsView: View {
     @State private var newSubjectID: UUID? = nil
     @State private var pendingDeletion: Subject? = nil
     @State private var confirmsDeletion = false
+    /// A subject that can't be deleted yet: its events would come out of their seal.
+    @State private var keptSubject: Subject? = nil
 
     var body: some View {
         let subjects = model.library.subjects
@@ -53,6 +55,31 @@ struct SubjectsSettingsView: View {
         } message: { subject in
             Text("Events in “\(subject.name)” stay on your calendar, without a subject.")
         }
+        .alert(
+            Text("“\(keptSubject?.name ?? "")” can't be deleted yet"),
+            isPresented: Binding(get: { keptSubject != nil }, set: { if !$0 { keptSubject = nil } }),
+            presenting: keptSubject
+        ) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { subject in
+            Text(keptMessage(for: subject))
+        }
+    }
+
+    /// Why a subject's events would come out of their seal without it.
+    private func keptMessage(for subject: Subject) -> String {
+        if case .home(let home) = model.calendarSettings.entry(forSubject: subject.id),
+            let space = model.spaces.first(where: { $0.id == home.space })
+        {
+            return String(
+                localized:
+                    "Its events keep their notes and files sealed in \(space.name). Without a subject they would have no home, and their notes would show everywhere. Give them another subject inside \(space.name), or delete them, first."
+            )
+        }
+        return String(
+            localized:
+                "Its home can't be found, so its events count as sealed. Give the subject a home first, or give its events another subject."
+        )
     }
 
     private var bottomBar: some View {
@@ -83,6 +110,10 @@ struct SubjectsSettingsView: View {
     }
 
     private func requestDeletion(of subject: Subject) {
+        if model.reach.deletingSubjectWouldUnseal(subject.id, in: model.library) {
+            keptSubject = subject
+            return
+        }
         pendingDeletion = subject
         confirmsDeletion = true
     }

@@ -58,16 +58,20 @@ public struct CaptureParser: Sendable {
         }
     }
 
-    /// The draft for `text`, or nil when there is nothing in it.
-    public func parse(_ text: String, now: Date, timeZone: TimeZone) -> CaptureDraft? {
+    /// Where `text` goes, and what is left of it after the space's name or keyword: the text trimmed, and
+    /// all of it for the Inbox. Nil when there is nothing in it.
+    public func split(_ text: String) -> (destination: CaptureDestination, content: String)? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        var destination = CaptureDestination.inbox
-        var content = trimmed
         if let (prefix, rest) = matchingPrefix(of: trimmed) {
-            destination = .space(prefix.space, matched: prefix.written)
-            content = rest
+            return (.space(prefix.space, matched: prefix.written), rest)
         }
+        return (.inbox, trimmed)
+    }
+
+    /// The draft for `text`, or nil when there is nothing in it.
+    public func parse(_ text: String, now: Date, timeZone: TimeZone) -> CaptureDraft? {
+        guard let (destination, content) = split(text) else { return nil }
         let firstLine = content.split(whereSeparator: \.isNewline).first.map(String.init)
         let title = NameSanitizer.captureTitle(firstLine: firstLine, now: now, timeZone: timeZone)
         // One line that is the title, letter for letter, needs no body that repeats it.

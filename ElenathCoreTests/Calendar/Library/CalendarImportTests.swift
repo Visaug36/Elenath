@@ -238,4 +238,125 @@ struct CalendarImportTests {
         #expect(!setup.fixture.exists("Calendar/\(setup.lectureFolder)/Diary.txt"))
         #expect(!setup.fixture.exists("Calendar/2026-10-30"))
     }
+
+    // MARK: - Found in the review for 0.2.0
+
+    /// Hidden files come along under their own names (a project's `.git`, an `.env`) and are counted, so
+    /// "everything is in Elenath" is true. Only the markers, the system's files and unfinished copies stay.
+    @Test func hiddenFilesComeAlongUnderTheirOwnNames() async throws {
+        let setup = try await Setup()
+        defer { setup.fixture.remove() }
+        let folder = setup.lectureFolder
+        let files = [
+            "Lab/main.swift": "print(1)", "Lab/.git/HEAD": "ref: refs/heads/main", "Lab/.env": "KEY=1",
+            ".notes.txt": "a hidden note", "Lab/.DS_Store": "finder", "._Slides.pdf": "apple double",
+            "Icon\r": "icon", ".ithil-copying-1234": "half a copy",
+        ]
+        for (path, text) in files {
+            try setup.ithil.write(Data(text.utf8), to: "\(folder)/\(path)")
+        }
+
+        let result = try await setup.bringIn()
+        // The setup's three files, main.swift, HEAD, .env and .notes.txt.
+        #expect(result.report.filesInSource == 7 && result.report.filesCopied == 7)
+        #expect(result.report.countsMatch)
+        #expect(try setup.calendarFile("\(folder)/Lab/.git/HEAD") == "ref: refs/heads/main")
+        #expect(try setup.calendarFile("\(folder)/Lab/.env") == "KEY=1")
+        #expect(try setup.calendarFile("\(folder)/.notes.txt") == "a hidden note")
+        #expect(!setup.fixture.exists("Calendar/\(folder)/notes.txt"))
+        for left in ["Lab/.DS_Store", "._Slides.pdf", "Icon\r", ".ithil-copying-1234"] {
+            #expect(!setup.fixture.exists("Calendar/\(folder)/\(left)"), "\(left) was brought in")
+        }
+    }
+
+    /// A folder the user made in Finder that Ithil never marked belongs to the occurrence whose folder it
+    /// is: it gets that marker, and bringing the calendar in again finds it instead of copying it twice.
+    @Test func aFolderIthilNeverMarkedIsntCopiedAgain() async throws {
+        var setup = try await Setup()
+        defer { setup.fixture.remove() }
+        let trip = CalendarFixtures.firstOccurrence(of: setup.source.events[1])
+        try FileManager.default.removeItem(at: setup.ithil.url.appending(path: "\(setup.tripFolder)/.ithil-event"))
+        let day = String(setup.tripFolder.split(separator: "/")[0])
+
+        let first = try await setup.bringIn()
+        #expect(first.report.countsMatch)
+        #expect(setup.fixture.exists("Calendar/\(setup.tripFolder)/.ithil-event"))
+        try await setup.store.save(first.document)
+        setup.calendar = first.document
+        // Elenath looks the folder up, as showing the event's files does.
+        #expect(await setup.store.eventFolders.existingFolder(for: trip) != nil)
+        let folders = setup.fixture.names(in: "Calendar/\(day)")
+
+        let second = try await setup.bringIn()
+        #expect(second.report.filesCopied == 0 && second.report.filesAlreadyThere == 3)
+        #expect(second.report.countsMatch)
+        #expect(setup.fixture.names(in: "Calendar/\(day)") == folders)
+    }
+
+    /// Whatever was deleted while the files were copied stays deleted: only the Ithil folder's calendar is
+    /// merged into the calendar as it is afterwards, and the report counts against that.
+    @Test func whatWasDeletedDuringTheCopyStaysDeleted() async throws {
+        let dentist = Event(
+            title: "Dentist",
+            timing: .timed(
+                start: CalendarFixtures.lectureStart, end: CalendarFixtures.lectureEnd,
+                timeZone: CalendarFixtures.timeZone("Europe/Amsterdam")))
+        let setup = try await Setup(calendar: CalendarDocument(events: [dentist]))
+        defer { setup.fixture.remove() }
+        let result = try await setup.bringIn()
+        #expect(result.document.events.contains { $0.id == dentist.id })
+
+        var current = setup.calendar
+        current.events.removeAll { $0.id == dentist.id }
+        let merged = CalendarImport.merge(result, into: current)
+        #expect(!merged.document.events.contains { $0.id == dentist.id })
+        #expect(merged.document.events == setup.source.events)
+        #expect(merged.report.eventsAdded == 3 && merged.report.subjectsAdded == 2)
+        #expect(merged.report.filesCopied == result.report.filesCopied)
+        #expect(merged.report.countsMatch)
+    }
+
+    /// A chosen folder whose `.ithil` links to another folder's calendar isn't an Ithil folder, and backups
+    /// reached through a link aren't read.
+    @Test func linkedCalendarFoldersAreNeverFollowed() async throws {
+        let setup = try await Setup()
+        defer { setup.fixture.remove() }
+        let chosen = try setup.fixture.folder.makeDirectory("Chosen")
+        try FileManager.default.createSymbolicLink(
+            at: chosen.appending(component: ".ithil"),
+            withDestinationURL: setup.ithil.url.appending(component: ".ithil"))
+        await #expect(throws: CalendarImportError.notAnIthilFolder) {
+            _ = try await CalendarImport.run(
+                from: chosen, into: setup.calendar, calendarFolder: setup.store.folder, libraryRoot: setup.fixture.root,
+                eventFolders: setup.store.eventFolders, fileSystem: setup.fixture.fileSystem)
+        }
+
+        let elsewhere = try setup.fixture.folder.makeDirectory("Elsewhere")
+        try DocumentCodec.encode(setup.source, savedAt: CalendarFixtures.start).write(
+            to: elsewhere.appending(component: "events-20261006-115000.json"))
+        try FileManager.default.createSymbolicLink(
+            at: setup.ithil.url.appending(path: ".ithil/backups"), withDestinationURL: elsewhere)
+        try setup.ithil.write(Data("{ damaged".utf8), to: ".ithil/events.json")
+        await #expect(throws: CalendarImportError.unreadable) {
+            _ = try await setup.bringIn()
+        }
+    }
+
+    /// A day folder in the calendar that is a link (into a space, here) is never written through: copies
+    /// stay inside the calendar's folder, and what couldn't come in is reported.
+    @Test func nothingIsWrittenThroughALinkInTheCalendarFolder() async throws {
+        let setup = try await Setup()
+        defer { setup.fixture.remove() }
+        _ = try await setup.fixture.space("Uni")
+        try FileManager.default.createDirectory(
+            at: setup.fixture.url("Uni/Planted"), withIntermediateDirectories: true, attributes: nil)
+        let day = String(setup.lectureFolder.split(separator: "/")[0])
+        try FileManager.default.createSymbolicLink(
+            at: setup.fixture.url("Calendar/\(day)"), withDestinationURL: setup.fixture.url("Uni/Planted"))
+
+        let result = try await setup.bringIn()
+        #expect(!result.report.countsMatch)
+        #expect(!result.report.missingFiles.isEmpty)
+        #expect(setup.fixture.names(in: "Uni/Planted").isEmpty)
+    }
 }

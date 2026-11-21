@@ -12,7 +12,19 @@ import Foundation
 /// Queries over thousands of events stay fast: non-repeating events are tested by interval overlap,
 /// and repeating events jump straight to the first candidate date near the start of the range instead
 /// of walking from the start of the series.
+///
+/// A repeating event whose occurrences last for years (only a hand-edited or damaged events.json has one)
+/// costs no more than a year's worth of them: occurrences that started more than `maximumLookbackDays`
+/// before a range aren't looked for, and of those that started before it and last into it only the latest
+/// `maximumSpanningOccurrences` are kept.
 public struct OccurrenceExpander: Sendable {
+    /// How long before a range an occurrence of a repeating event may have started and still be found
+    /// lasting into it.
+    public static let maximumLookbackDays = 366
+    /// How many occurrences of one repeating event that started before a range and last into it are kept
+    /// (the latest ones).
+    public static let maximumSpanningOccurrences = 32
+
     /// The time zone all-day events are placed in (normally the Mac's current time zone).
     public let displayTimeZone: TimeZone
     private let displayCalendar: Calendar
@@ -274,20 +286,28 @@ public struct OccurrenceExpander: Sendable {
         into result: inout [Occurrence]
     ) {
         let interval = window.interval
-        // An occurrence overlaps when it starts in (interval.start - duration) ..< interval.end. A spare
-        // day on each side absorbs DST shifts of the start time.
-        let low = pattern.dayNumber(of: interval.start.addingTimeInterval(-pattern.duration)) - 1
+        // An occurrence overlaps when it starts in (interval.start - duration) ..< interval.end, looking back
+        // a year at most. A spare day on each side absorbs DST shifts of the start time.
+        let lookback = min(pattern.duration, TimeInterval(Self.maximumLookbackDays) * 86_400)
+        let low = pattern.dayNumber(of: interval.start.addingTimeInterval(-lookback)) - 1
         let high = pattern.dayNumber(of: interval.end) + 1
+        var spanning = SpanningOccurrences()
         OccurrenceDayMath.forEachSeriesDay(of: rule, firstDay: pattern.firstDay, from: low, through: high) { number in
             let day = OccurrenceDayMath.date(fromNumber: number)
             if event.excludedDates.contains(day) { return true }
             guard let start = pattern.startInstant(on: day, number: number) else { return true }
             let end = start.addingTimeInterval(pattern.duration)
             if Self.overlaps(start: start, end: end, interval) {
-                result.append(Occurrence(event: event, date: day, start: start, end: end))
+                let occurrence = Occurrence(event: event, date: day, start: start, end: end)
+                if start < interval.start {
+                    spanning.add(occurrence)
+                } else {
+                    result.append(occurrence)
+                }
             }
             return true
         }
+        result.append(contentsOf: spanning.latest)
     }
 
     private func collectAllDaySeries(
@@ -298,19 +318,25 @@ public struct OccurrenceExpander: Sendable {
         window: ExpansionWindow,
         into result: inout [Occurrence]
     ) {
-        // An occurrence on day k covers k ... k + length. A spare day on each side covers the offset
-        // between the display time zone and the interval's.
-        let low = window.firstDay - length - 1
+        // An occurrence on day k covers k ... k + length, looking back a year at most. A spare day on each
+        // side covers the offset between the display time zone and the interval's.
+        let low = window.firstDay - min(length, Self.maximumLookbackDays) - 1
         let high = window.lastDay + 1
+        var spanning = SpanningOccurrences()
         OccurrenceDayMath.forEachSeriesDay(of: rule, firstDay: first, from: low, through: high) { number in
             let day = OccurrenceDayMath.date(fromNumber: number)
             guard !event.excludedDates.contains(day) else { return true }
             let occurrence = allDayOccurrence(of: event, date: day, number: number, length: length)
             if Self.overlaps(start: occurrence.start, end: occurrence.end, window.interval) {
-                result.append(occurrence)
+                if occurrence.start < window.interval.start {
+                    spanning.add(occurrence)
+                } else {
+                    result.append(occurrence)
+                }
             }
             return true
         }
+        result.append(contentsOf: spanning.latest)
     }
 
     /// The event's first occurrence, whether or not its day is excluded.
@@ -351,4 +377,19 @@ public struct OccurrenceExpander: Sendable {
         let day = CalendarDate(year: parts.year ?? 1970, month: parts.month ?? 1, day: parts.day ?? 1)
         return OccurrenceDayMath.number(of: day)
     }
+}
+
+/// The occurrences of one series that started before a range and last into it, keeping only the latest
+/// `OccurrenceExpander.maximumSpanningOccurrences` (they arrive oldest first) without ever holding many more.
+private struct SpanningOccurrences {
+    private var kept: [Occurrence] = []
+
+    mutating func add(_ occurrence: Occurrence) {
+        kept.append(occurrence)
+        if kept.count >= 2 * OccurrenceExpander.maximumSpanningOccurrences {
+            kept.removeFirst(kept.count - OccurrenceExpander.maximumSpanningOccurrences)
+        }
+    }
+
+    var latest: ArraySlice<Occurrence> { kept.suffix(OccurrenceExpander.maximumSpanningOccurrences) }
 }

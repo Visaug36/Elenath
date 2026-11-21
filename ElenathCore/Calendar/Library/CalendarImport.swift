@@ -19,8 +19,9 @@ public struct CalendarImportReport: Hashable, Sendable {
     public var eventsInSource = 0
     /// Folders in the Ithil folder's day folders: one per event occurrence that has files.
     public var foldersInSource = 0
-    /// The visible files in the day folders and event folders. Hidden files are left behind: the markers
-    /// are written anew, and the rest is the system's (`.DS_Store`) or nothing the user sees.
+    /// The files in the day folders and event folders, hidden ones included (a project's `.git`, an
+    /// `.env`). Left behind, and not counted: Ithil's markers (written anew), the system's `.DS_Store`,
+    /// AppleDouble (`._…`) and custom-icon files, and copies that never finished.
     public var filesInSource = 0
 
     /// Brought in this time.
@@ -51,14 +52,19 @@ public struct CalendarImportReport: Hashable, Sendable {
     }
 }
 
-/// The calendar with the Ithil folder's subjects and events merged in, for the app to save as one change,
-/// and the report.
+/// The calendar with the Ithil folder's subjects and events merged in, the Ithil folder's calendar as it was
+/// read, and the report.
 public struct CalendarImportResult: Hashable, Sendable {
+    /// The calendar `run` was given, with the Ithil folder's subjects and events merged in.
     public var document: CalendarDocument
+    /// The Ithil folder's calendar as it was read. The app merges this, and only this, into the calendar as
+    /// it is once the files are copied (`merge(_:into:)`), so nothing deleted meanwhile comes back.
+    public var source: CalendarDocument
     public var report: CalendarImportReport
 
-    public init(document: CalendarDocument, report: CalendarImportReport) {
+    public init(document: CalendarDocument, source: CalendarDocument, report: CalendarImportReport) {
         self.document = document
+        self.source = source
         self.report = report
     }
 }
@@ -66,11 +72,12 @@ public struct CalendarImportResult: Hashable, Sendable {
 /// "Bring in my Ithil calendar" (docs/ARCHITECTURE.md, "Bringing in an Ithil calendar").
 ///
 /// - **The Ithil folder is only read.** Nothing is created, changed, recovered or migrated inside it, and
-///   links in it are never followed.
-/// - **Copy, never move or overwrite.** Event folders are copied into the calendar's folder, file by file
-///   under a hidden name until each is complete (`FileCopier`), and each gets its marker (read from
-///   Ithil's and written anew). A file that is already there is left alone, so running it again brings in
-///   nothing twice. Hidden files are left behind.
+///   links in it are never followed, `.ithil` and its `backups` included.
+/// - **Copy, never move or overwrite.** Event folders are copied into the calendar's folder (and nowhere
+///   else in the library), file by file under a hidden name until each is complete (`FileCopier`), each
+///   under its own name, hidden ones included. Each event folder gets its marker: read from Ithil's and
+///   written anew, or, for a folder Ithil never marked, the marker of the one occurrence whose folder it
+///   is. A file that is already there is left alone, so running it again brings in nothing twice.
 /// - **Merge by id.** A subject or event whose id the calendar already has is left alone. A subject
 ///   that the calendar already had under the same name is used instead of a second one of that name.
 /// - **Check.** Afterwards every file of the Ithil folder is looked for in the calendar, and the counts
@@ -101,12 +108,26 @@ public enum CalendarImport {
         let document = merge(ithil, into: calendar, report: &report)
 
         let plan = await planCopies(
-            from: source, into: calendarFolder, eventFolders: eventFolders, fileSystem: fileSystem)
+            from: source, calendar: ithil, into: calendarFolder, eventFolders: eventFolders, fileSystem: fileSystem)
         report.foldersInSource = plan.folderCount
         report.filesInSource = plan.files.count
-        try await copy(plan, libraryRoot: libraryRoot, fileSystem: fileSystem, report: &report, progress: progress)
+        try await copy(
+            plan, calendarFolder: calendarFolder, fileSystem: fileSystem, report: &report, progress: progress)
         await eventFolders.reindex()
-        return CalendarImportResult(document: document, report: report)
+        return CalendarImportResult(document: document, source: ithil, report: report)
+    }
+
+    /// `result` merged into the calendar as it is now, which may have changed while the files were copied:
+    /// only the Ithil folder's subjects and events are merged, so nothing deleted meanwhile comes back. The
+    /// report's subject and event counts are counted again against `current`; its file counts stay.
+    public static func merge(_ result: CalendarImportResult, into current: CalendarDocument) -> CalendarImportResult {
+        var report = result.report
+        report.subjectsAdded = 0
+        report.subjectsAlreadyThere = 0
+        report.eventsAdded = 0
+        report.eventsAlreadyThere = 0
+        let document = merge(result.source, into: current, report: &report)
+        return CalendarImportResult(document: document, source: result.source, report: report)
     }
 
     // MARK: - Reading the Ithil folder
@@ -116,6 +137,8 @@ public enum CalendarImport {
     static func readCalendar(in folder: URL, fileSystem: any FileSystem) throws -> (CalendarDocument, Bool) {
         let metadata = folder.appending(
             component: LibraryLayout.calendarMetadataFolderName, directoryHint: .isDirectory)
+        // `.ithil` must be the folder's own: a link to another folder's would bring in someone else's calendar.
+        guard isRealFolder(metadata, fileSystem: fileSystem) else { throw CalendarImportError.notAnIthilFolder }
         let file = metadata.appending(component: CalendarDocument.fileName, directoryHint: .notDirectory)
         var foundSomething = false
         if let data = readRegularFile(file, fileSystem: fileSystem) {
@@ -130,7 +153,9 @@ public enum CalendarImport {
         }
         let backups = metadata.appending(component: LibraryLayout.backupsFolderName, directoryHint: .isDirectory)
         var newest: DecodedDocument<CalendarDocument>?
-        let names = ((try? fileSystem.contentsOfDirectory(at: backups)) ?? []).map(\.lastPathComponent)
+        let names =
+            isRealFolder(backups, fileSystem: fileSystem)
+            ? ((try? fileSystem.contentsOfDirectory(at: backups)) ?? []).map(\.lastPathComponent) : []
         for name in names where name.hasPrefix(CalendarDocument.backupPrefix) && name.hasSuffix(".json") {
             let url = backups.appending(component: name, directoryHint: .notDirectory)
             guard let data = readRegularFile(url, fileSystem: fileSystem) else { continue }
@@ -158,8 +183,7 @@ public enum CalendarImport {
     // MARK: - Merging
 
     /// `calendar` with the subjects and events of `ithil` that it doesn't have yet (by id, or for a subject
-    /// by name). The app merges `run`'s result into the calendar again once the files are copied, in case it
-    /// changed meanwhile.
+    /// by name). Counts into `report`'s subject and event numbers.
     public static func merge(
         _ ithil: CalendarDocument, into calendar: CalendarDocument, report: inout CalendarImportReport
     ) -> CalendarDocument {
@@ -218,9 +242,12 @@ public enum CalendarImport {
 
     /// Every file to bring in, with the folder it goes into. An event folder goes into the calendar's
     /// folder for the same occurrence when there is one (found by its marker, wherever it was renamed to),
-    /// else under its own name in the same day folder, or the next free name when that is another's.
+    /// else under its own name in the same day folder, or the next free name when that is another's. A
+    /// folder without a marker belongs to the one occurrence of `calendar` whose folder it is, if there is
+    /// exactly one.
     static func planCopies(
-        from source: URL, into calendarFolder: URL, eventFolders: EventFolders, fileSystem: any FileSystem
+        from source: URL, calendar: CalendarDocument, into calendarFolder: URL, eventFolders: EventFolders,
+        fileSystem: any FileSystem
     ) async -> CopyPlan {
         var plan = CopyPlan()
         let existing = await eventFolders.markedFolders()
@@ -233,7 +260,7 @@ public enum CalendarImport {
             let destinationDay = calendarFolder.appending(component: dayName, directoryHint: .isDirectory)
             for item in sortedContents(of: day, fileSystem: fileSystem) {
                 let name = item.lastPathComponent
-                guard !name.hasPrefix("."), let info = fileSystem.info(at: item), !info.isSymbolicLink,
+                guard !isLeftBehind(name), let info = fileSystem.info(at: item), !info.isSymbolicLink,
                     !info.isSpecial
                 else { continue }
                 if !info.isDirectory {
@@ -242,11 +269,13 @@ public enum CalendarImport {
                     continue
                 }
                 plan.folderCount += 1
+                let marker =
+                    EventFolderMarker.read(in: item, fileSystem: fileSystem)
+                    ?? marker(forFolderNamed: name, inDay: dayName, of: calendar)
                 let destination = destinationFolder(
-                    for: item, in: destinationDay, existing: existing, claimed: &claimed, fileSystem: fileSystem)
-                if let marker = EventFolderMarker.read(in: item, fileSystem: fileSystem),
-                    EventFolderMarker.read(in: destination, fileSystem: fileSystem) == nil
-                {
+                    for: item, marker: marker, in: destinationDay, existing: existing, claimed: &claimed,
+                    fileSystem: fileSystem)
+                if let marker, EventFolderMarker.read(in: destination, fileSystem: fileSystem) == nil {
                     plan.markers.append((destination, marker))
                 }
                 addTree(
@@ -257,12 +286,31 @@ public enum CalendarImport {
         return plan
     }
 
+    /// The marker of the one occurrence of `calendar` whose folder is `<dayName>/<name>`, for a folder
+    /// Ithil never marked (one the user made in Finder). Nil when no occurrence or more than one has that
+    /// folder.
+    static func marker(
+        forFolderNamed name: String, inDay dayName: String, of calendar: CalendarDocument
+    )
+        -> EventFolderMarker?
+    {
+        guard let day = CalendarDate(isoString: dayName), day.isValid else { return nil }
+        // A day in any time zone lies inside the same date ± 2 days in UTC; the folder names decide.
+        let window = DateInterval(start: day.adding(days: -2).start(in: .gmt), end: day.adding(days: 3).start(in: .gmt))
+        let key = NameSanitizer.key(name)
+        let owners = OccurrenceExpander(displayTimeZone: .gmt).occurrences(of: calendar.events, in: window).filter {
+            FolderNaming.dayFolderName(for: $0) == dayName
+                && NameSanitizer.key(FolderNaming.eventFolderName(for: $0)) == key
+        }
+        guard owners.count == 1, let owner = owners.first else { return nil }
+        return EventFolderMarker(occurrence: owner)
+    }
+
     /// Where an event folder of the Ithil folder goes.
     private static func destinationFolder(
-        for folder: URL, in destinationDay: URL, existing: [Occurrence.ID: URL], claimed: inout Set<URL>,
-        fileSystem: any FileSystem
+        for folder: URL, marker: EventFolderMarker?, in destinationDay: URL, existing: [Occurrence.ID: URL],
+        claimed: inout Set<URL>, fileSystem: any FileSystem
     ) -> URL {
-        let marker = EventFolderMarker.read(in: folder, fileSystem: fileSystem)
         if let marker, let found = existing[marker.occurrenceID] {
             return found
         }
@@ -295,7 +343,8 @@ public enum CalendarImport {
         return destination
     }
 
-    /// Adds every visible file in `folder` (folders inside it included), never through a link.
+    /// Adds every file in `folder` (folders inside it included, hidden ones too, apart from what
+    /// `isLeftBehind` names), never through a link.
     private static func addTree(
         _ folder: URL, into destination: URL, relativePath: String, depth: Int, plan: inout CopyPlan,
         fileSystem: any FileSystem
@@ -303,7 +352,7 @@ public enum CalendarImport {
         guard depth < FileCopier.maximumFolderDepth else { return }
         for item in sortedContents(of: folder, fileSystem: fileSystem) {
             let name = item.lastPathComponent
-            guard !name.hasPrefix("."), let info = fileSystem.info(at: item), !info.isSymbolicLink, !info.isSpecial
+            guard !isLeftBehind(name), let info = fileSystem.info(at: item), !info.isSymbolicLink, !info.isSpecial
             else { continue }
             let path = "\(relativePath)/\(name)"
             if info.isDirectory {
@@ -316,16 +365,17 @@ public enum CalendarImport {
         }
     }
 
-    /// Copies every planned file that isn't there yet, then looks for each one.
+    /// Copies every planned file that isn't there yet, then looks for each one. Everything is written inside
+    /// the calendar's folder, never elsewhere in the library, even through a link planted in it.
     private static func copy(
-        _ plan: CopyPlan, libraryRoot: URL, fileSystem: any FileSystem, report: inout CalendarImportReport,
+        _ plan: CopyPlan, calendarFolder: URL, fileSystem: any FileSystem, report: inout CalendarImportReport,
         progress: @escaping @Sendable (FileCopyProgress) -> Void
     ) async throws {
         let log = CoreLog(category: "CalendarImport")
         // Markers first, so a folder is found by its marker even if copying its files stops halfway.
         for (folder, marker) in plan.markers {
             do {
-                try createFolders(folder, under: libraryRoot, fileSystem: fileSystem)
+                try createFolders(folder, under: calendarFolder, fileSystem: fileSystem)
                 let file = folder.appending(component: EventFolderMarker.fileName, directoryHint: .notDirectory)
                 if fileSystem.info(at: file) == nil {
                     try fileSystem.writeAtomically(marker.markerFileData(), to: file)
@@ -344,10 +394,10 @@ public enum CalendarImport {
         for (index, file) in pending.enumerated() {
             try Task.checkCancellation()
             do {
-                try createFolders(file.folder, under: libraryRoot, fileSystem: fileSystem)
+                try createFolders(file.folder, under: calendarFolder, fileSystem: fileSystem)
                 let base = state
                 _ = try await FileCopier.copy(
-                    [file.source], into: file.folder, root: libraryRoot, fileSystem: fileSystem
+                    [file.source], into: file.folder, root: calendarFolder, fileSystem: fileSystem, naming: .exact
                 ) { step in
                     var combined = base
                     combined.completedBytes = base.completedBytes + step.completedBytes
@@ -379,9 +429,9 @@ public enum CalendarImport {
         }
     }
 
-    /// Creates `folder` and the folders above it inside the library, refusing a path that leads outside it.
-    private static func createFolders(_ folder: URL, under libraryRoot: URL, fileSystem: any FileSystem) throws {
-        guard PathContainment.isStrictlyInside(folder, folder: libraryRoot) else {
+    /// Creates `folder` and the folders above it inside `root`, refusing a path that leads outside it.
+    private static func createFolders(_ folder: URL, under root: URL, fileSystem: any FileSystem) throws {
+        guard PathContainment.isStrictlyInside(folder, folder: root) else {
             throw FileCopyError.outsideLibrary
         }
         if let info = fileSystem.info(at: folder), !info.isDirectory || info.isSymbolicLink {
@@ -391,6 +441,16 @@ public enum CalendarImport {
     }
 
     // MARK: - Helpers
+
+    /// What isn't brought in: Ithil's markers (written anew), the system's `.DS_Store`, AppleDouble files
+    /// (`._…`, metadata from other file systems), custom-icon files and copies that never finished. Every
+    /// other file comes along, hidden or not.
+    static func isLeftBehind(_ name: String) -> Bool {
+        let lowercased = name.lowercased()
+        return lowercased == EventFolderMarker.fileName.lowercased() || lowercased == ".ds_store"
+            || name.hasPrefix("._") || name == "Icon\r" || lowercased.hasPrefix(".ithil-copying-")
+            || lowercased.hasPrefix(FileCopier.temporaryNamePrefix)
+    }
 
     /// "2026-11-16": a day folder of Ithil's.
     static func isDayFolderName(_ name: String) -> Bool {

@@ -20,7 +20,7 @@ struct QuickCaptureView: View {
 
     var body: some View {
         let draft = model.captureDraft(for: session.text)
-        let eventDraft = calendar.captureEvent(for: session.text)
+        let reading = calendar.captureReading(for: session.text)
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "tray.and.arrow.down")
@@ -42,10 +42,15 @@ struct QuickCaptureView: View {
                     .padding(.horizontal, 18)
                     .padding(.bottom, 12)
             }
-            if let eventDraft {
+            switch reading {
+            case .event(let eventDraft)?:
                 CaptureEventLine(draft: eventDraft) {
                     onAddEvent(false)
                 }
+            case .noSubjectIn(let space)?:
+                CaptureNoSubjectLine(space: calendar.spaces.first { $0.id == space })
+            case nil:
+                EmptyView()
             }
             footer(draft: draft)
         }
@@ -161,6 +166,42 @@ private struct CaptureEventLine: View {
         case .allDay(let start, _):
             return EventFormatting.weekdayAbbreviation(start)
         }
+    }
+}
+
+/// For text meant for a sealed space where no subject lives: ⌥↩ adds nothing, since the event would have no
+/// home and show everywhere.
+private struct CaptureNoSubjectLine: View {
+    let space: Space?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.textTertiary)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(Typography.secondary)
+                .foregroundStyle(Color.textSecondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.separatorLine)
+                .frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var message: String {
+        guard let space else { return String(localized: "This can't be added to the calendar here.") }
+        return String(
+            localized:
+                "No subject has its home in \(space.name) yet, so this can't be a sealed event there. Give a subject that home in Settings."
+        )
     }
 }
 

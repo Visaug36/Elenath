@@ -68,7 +68,16 @@ final class CalendarModel {
     /// Elenath's calendar settings from library.json: each subject's home.
     private(set) var calendarSettings = CalendarSettings()
     /// Where the calendar is working: everywhere, or inside one space.
-    private(set) var workplace: Workplace = .everywhere
+    private(set) var workplace: Workplace = .everywhere {
+        didSet {
+            if workplace != oldValue {
+                workplaceChanged?()
+            }
+        }
+    }
+    /// Called when the calendar starts working inside a space or everywhere again: the window's own
+    /// workplace (its sidebar's tags and folders) follows.
+    @ObservationIgnored var workplaceChanged: (@MainActor () -> Void)? = nil
     /// What of each event's content may be read from `workplace`.
     var reach: CalendarReach {
         CalendarReach(workplace: workplace, spaces: spaces, settings: calendarSettings)
@@ -261,9 +270,12 @@ final class CalendarModel {
         notifyObservers(.subjectsChanged, from: old)
     }
 
-    /// Removes the subject. Its events keep existing with no subject.
+    /// Removes the subject. Its events keep existing with no subject. Never when that would bring their
+    /// content out of a seal (`CalendarReach.deletingSubjectWouldUnseal`): Settings explains that first.
     func deleteSubject(id: UUID) {
-        guard canEdit, library.subjects.contains(where: { $0.id == id }) else { return }
+        guard canEdit, library.subjects.contains(where: { $0.id == id }),
+            !reach.deletingSubjectWouldUnseal(id, in: library)
+        else { return }
         var updated = library
         updated.subjects.removeAll { $0.id == id }
         let stamp = timeSource.now.roundedToSecond
@@ -571,13 +583,22 @@ final class CalendarModel {
 
     // MARK: - Quick Capture
 
-    /// The event Quick Capture's text describes, when it names a date or a time ("physics quiz thursday
-    /// 10am"): the panel offers "⌥↩ Add to Calendar". Nil for text that is just a note.
+    /// What Quick Capture's ⌥↩ would add for `text` (`CaptureEvent`): the event its first line names, sent
+    /// to the space the text starts with. Nil for a note, and when that space is sealed and no subject lives
+    /// there (`captureReading(for:)` tells that apart).
     func captureEvent(for text: String) -> QuickAddDraft? {
-        guard state == .ready, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let draft = makeQuickAddParser().parse(text, now: now), draft.hasDate || draft.hasTime
-        else { return nil }
+        guard case .event(let draft) = captureReading(for: text) else { return nil }
         return draft
+    }
+
+    /// How Quick Capture reads `text` as an event: an event, a sealed space where no subject lives, or nil.
+    func captureReading(for text: String) -> CaptureEvent.Reading? {
+        guard state == .ready else { return nil }
+        let parser = makeQuickAddParser()
+        let now = now
+        return CaptureEvent.read(text, spaces: spaces, subjects: library.subjects, settings: calendarSettings) {
+            parser.parse($0, now: now)
+        }
     }
 
     /// The event for a draft from `captureEvent(for:)`, not yet added.
@@ -588,6 +609,10 @@ final class CalendarModel {
 
     /// Copies files dropped on Quick Capture into a new event's folder; set by the app (`FilesController`).
     @ObservationIgnored var filesForNewEvent: (@MainActor ([URL], Occurrence) -> Void)? = nil
+    /// Whether files are being copied into an event (`FilesController`); moving the library waits for none.
+    @ObservationIgnored var isCopyingFiles: (@MainActor () -> Bool)? = nil
+    /// Waits for the event folders' disk work to finish, up to a timeout; true when it has.
+    @ObservationIgnored var finishFileWork: (@MainActor (Duration) async -> Bool)? = nil
 
     // MARK: - Saving
 
@@ -735,6 +760,17 @@ final class CalendarModel {
         if case .space(let id) = workplace, !spaces.contains(where: { $0.id == id }) {
             workplace = .everywhere
         }
+        settleDamagedSettings()
+    }
+
+    /// Calendar settings found damaged in library.json (`CalendarSettings.isDamaged`) are settled for the
+    /// calendar's subjects: each keeps its events sealed until it has a home again.
+    private func settleDamagedSettings() {
+        guard canEdit, calendarSettings.isDamaged else { return }
+        var updated = calendarSettings
+        guard updated.settleDamage(subjects: library.subjects.map(\.id)) else { return }
+        calendarSettings = updated
+        persistSettings(updated)
     }
 
     /// events.json changed outside Elenath (Finder, a sync, another app): reads it again and shows it, unless
@@ -747,6 +783,18 @@ final class CalendarModel {
         Task {
             guard let load = try? await store.load() else { return }
             guard generation == loadGeneration, session == librarySession, !hasPendingSaves else { return }
+            // A file from a newer version (through a synced folder) makes the calendar read-only, as at open:
+            // a change made now couldn't be saved. A file recovered from a backup is said, as at open.
+            if load.isReadOnly, !isReadOnly {
+                logger.notice("events.json is from a newer version now; the calendar is read-only")
+                isReadOnly = true
+                saveQueue = nil
+                undoManager?.removeAllActions(withTarget: self)
+                lastSubjectEdit = nil
+            }
+            if let recovery = load.recovery {
+                recoveryNotice = recovery
+            }
             guard load.document != library, load.document.id == library.id else { return }
             logger.notice("events.json changed outside Elenath; showing the new version")
             let old = library
@@ -822,10 +870,15 @@ final class CalendarModel {
             saveQueue = CalendarSaveQueue(store: store) { [weak self] number, error in
                 self?.saveFinished(number: number, error: error, session: session)
             }
-            // The calendar's id goes into library.json, so its safety copy is found if its folder is lost.
-            if calendarSettings.calendarID != load.document.id {
-                var updated = calendarSettings
+            // Damaged settings are settled for this calendar's subjects, and the calendar's id goes into
+            // library.json, so its safety copy is found if its folder is lost.
+            var updated = calendarSettings
+            var changed = updated.settleDamage(subjects: load.document.subjects.map(\.id))
+            if updated.calendarID != load.document.id {
                 updated.calendarID = load.document.id
+                changed = true
+            }
+            if changed {
                 calendarSettings = updated
                 persistSettings(updated)
             }

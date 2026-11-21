@@ -20,6 +20,7 @@ public struct CalendarReach: Hashable, Sendable {
 
     private let settings: CalendarSettings
     private let spaceIDs: Set<SpaceID>
+    private let sealedSpaceIDs: Set<SpaceID>
     /// Whether the workplace reads the spaces that mix, where events without a home belong.
     private let readsSpacesThatMix: Bool
 
@@ -27,6 +28,7 @@ public struct CalendarReach: Hashable, Sendable {
         reach = Reach(workplace: workplace, spaces: spaces)
         self.settings = settings
         spaceIDs = Set(spaces.map(\.id))
+        sealedSpaceIDs = Set(spaces.filter(\.isSealed).map(\.id))
         switch workplace {
         case .everywhere:
             readsSpacesThatMix = true
@@ -70,6 +72,22 @@ public struct CalendarReach: Hashable, Sendable {
             return false
         case .home(let home):
             return spaceIDs.contains(home.space) && reach.allows(.space(home.space))
+        }
+    }
+
+    /// Whether deleting the subject would bring its events' content out of a seal: the events would have no
+    /// home, and an event without a home is read wherever the spaces that mix are. True when the subject has
+    /// events and its home is a sealed space, a space that is gone, or an entry that can't be read. The app
+    /// doesn't delete such a subject; its events need another subject first.
+    public func deletingSubjectWouldUnseal(_ subject: UUID, in document: CalendarDocument) -> Bool {
+        guard document.events.contains(where: { $0.subjectID == subject }) else { return false }
+        switch settings.entry(forSubject: subject) {
+        case .none:
+            return false
+        case .unreadable:
+            return true
+        case .home(let home):
+            return !spaceIDs.contains(home.space) || sealedSpaceIDs.contains(home.space)
         }
     }
 

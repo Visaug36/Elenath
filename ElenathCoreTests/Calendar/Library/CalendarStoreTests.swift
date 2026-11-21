@@ -163,6 +163,21 @@ struct CalendarStoreTests {
         #expect(try Data(contentsOf: fixture.url("Calendar/.ithil/events.json")) == bytes)
     }
 
+    /// Read-only, too, `.ithil` is never read through a link: it would show another folder's calendar.
+    @Test func aReadOnlyLibraryNeverReadsThroughALinkedMetadataFolder() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let elsewhere = try fixture.folder.makeDirectory("Elsewhere")
+        try DocumentCodec.encode(CalendarFixtures.sampleCalendar(), savedAt: CalendarFixtures.start).write(
+            to: elsewhere.appending(component: "events.json"))
+        try FileManager.default.createDirectory(
+            at: fixture.url("Calendar"), withIntermediateDirectories: true, attributes: nil)
+        try FileManager.default.createSymbolicLink(at: fixture.url("Calendar/.ithil"), withDestinationURL: elsewhere)
+        await #expect(throws: CalendarStoreError.notAFolder) {
+            _ = try await fixture.calendarStore().load(readOnly: true)
+        }
+    }
+
     /// Elenath 0.1 let a space be called "Calendar". It stays a space, untouched, until it is renamed.
     @Test func aSpaceCalledCalendarFromAnOlderVersionStaysASpace() async throws {
         let fixture = try await LibraryFixture()

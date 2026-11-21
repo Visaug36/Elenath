@@ -488,4 +488,41 @@ struct OccurrenceExpanderTests {
         }
         return days
     }
+
+    // MARK: - Events that last for years (found in the review for 0.2.0)
+
+    /// A repeating event whose occurrences last for centuries (a hand-edited or damaged events.json): a
+    /// week of it costs a year's worth of occurrences at most, never the whole series.
+    @Test func aRepeatingEventThatLastsForCenturiesStaysCheap() throws {
+        let week = Fixture.days(Fixture.day(2026, 10, 5), Fixture.day(2026, 10, 11), in: Fixture.amsterdam)
+        let forever = Fixture.allDay(
+            "Forever", from: Fixture.day(1, 1, 1), through: Fixture.day(9999, 12, 31),
+            recurrence: RecurrenceRule(frequency: .daily))
+        let longTimed = Fixture.timed(
+            "Millennia", start: Fixture.instant(1000, 1, 1, 9, 0, in: Fixture.utc), minutes: 2000 * 365 * 24 * 60,
+            in: Fixture.utc, recurrence: RecurrenceRule(frequency: .daily))
+        let weekly = Fixture.allDay(
+            "Ages", from: Fixture.day(26, 1, 5), through: Fixture.day(2026, 12, 20),
+            recurrence: RecurrenceRule(frequency: .weekly))
+        let month = Fixture.days(Fixture.day(2026, 9, 28), Fixture.day(2026, 11, 8), in: Fixture.amsterdam)
+        let started = ContinuousClock.now
+        for (event, range) in [(forever, week), (longTimed, week), (weekly, month)] {
+            let found = amsterdam.occurrences(of: event, in: range)
+            // The latest occurrences that started before the range, and those that start in it.
+            #expect(found.count <= OccurrenceExpander.maximumSpanningOccurrences + 43, "\(event.title)")
+            #expect(!found.isEmpty, "\(event.title)")
+        }
+        #expect(ContinuousClock.now - started < .seconds(2))
+    }
+
+    /// Long but sensible repeating events still show while they last: of a monthly event lasting 200 days,
+    /// a December week holds the seven occurrences that started from June on.
+    @Test func occurrencesThatStartedMonthsAgoStillShow() throws {
+        let rota = Fixture.allDay(
+            "Rota", from: Fixture.day(2026, 1, 1), through: Fixture.day(2026, 7, 19),
+            recurrence: RecurrenceRule(frequency: .monthly))
+        let december = Fixture.days(Fixture.day(2026, 12, 7), Fixture.day(2026, 12, 13), in: Fixture.amsterdam)
+        let found = amsterdam.occurrences(of: rota, in: december)
+        #expect(found.map(\.date) == (6...12).map { Fixture.day(2026, $0, 1) })
+    }
 }

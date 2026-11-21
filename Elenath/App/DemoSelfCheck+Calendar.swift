@@ -78,10 +78,20 @@ extension DemoSelfCheck {
         try check(calendar.library.event(withID: event.id) == nil, "redoing the delete left the event")
 
         // Working inside the sealed space, and everywhere again.
+        // The sidebar follows: what it read inside the sealed space (its tags and folders) is gone once the
+        // calendar works everywhere again.
         if let sealed = model.spaces.first(where: { $0.isSealed }) {
             calendar.work(in: .space(sealed.id))
-            try await settle(seconds: 0.3)
+            model.contentChanged()  // As a save inside the space would.
+            try await waitFor("the sealed space's tags in the sidebar", seconds: 10) {
+                self.model.tags.contains { $0.tag == "first-aid" }
+            }
             calendar.work(in: .everywhere)
+            try await visit(.today)
+            try await settle(seconds: 0.5)
+            try check(!model.tags.contains { $0.tag == "first-aid" }, "a sealed space's tag stayed in the sidebar")
+            try check(model.folders[sealed.id]?.isEmpty ?? true, "a sealed space's folders stayed in the sidebar")
+            try await visit(.calendar)
         }
 
         // Quick Capture's event line.
@@ -92,6 +102,18 @@ extension DemoSelfCheck {
         let captured = calendar.makeEvent(from: draft)
         try await calendarAct("add an event from Quick Capture") { calendar.add(captured) }
         try check(calendar.captureEvent(for: "just a thought about tea") == nil, "a plain note became an event")
+        // Text for the sealed space becomes an event sealed there, never one without a home, and the space's
+        // name isn't part of its title.
+        if let sealed = model.spaces.first(where: { $0.isSealed }) {
+            let addressed = "\(sealed.name.lowercased()): debrief saturday 9pm"
+            guard let sealedDraft = calendar.captureEvent(for: addressed) else {
+                throw Failure(description: "Quick Capture found no event in “\(addressed)”")
+            }
+            let sealedEvent = calendar.makeEvent(from: sealedDraft)
+            try check(calendar.reach.home(of: sealedEvent)?.space == sealed.id, "the event wasn't sealed in its space")
+            try check(
+                !sealedEvent.title.lowercased().contains(sealed.name.lowercased()), "the space's name is in the title")
+        }
 
         // A note for an event, in its subject's home.
         if let lecture = calendar.occurrences(in: calendar.visibleDays).first(where: {
@@ -146,7 +168,8 @@ extension DemoSelfCheck {
                     result.report.eventsAdded == 0 && result.report.filesCopied == 0,
                     "the second run brought things in twice")
             }
-            try await calendarAct("bring in an Ithil calendar, run \(run)") { calendar.bringIn(result.document) }
+            let merged = CalendarImport.merge(result, into: calendar.library)
+            try await calendarAct("bring in an Ithil calendar, run \(run)") { calendar.bringIn(merged.document) }
             if run == 1 {
                 broughtIn = calendar.library
                 try check(broughtIn.events.count > before.events.count, "bringing in added no events")
@@ -159,6 +182,24 @@ extension DemoSelfCheck {
         try check(calendar.library == before, "undoing Bring In didn't take it all back")
         try await redoCalendar("Bring In Ithil Calendar")
         try check(calendar.library == broughtIn, "redoing Bring In didn't bring it all back")
+    }
+
+    /// A newer Elenath's events.json arrives (through a synced folder): the calendar shows it read-only, so no
+    /// change is made that couldn't be saved, and nothing is saved over it.
+    func newerCalendarArrives() async throws {
+        let calendar = model.calendar
+        guard let folder = calendar.rootURL else { throw Failure(description: "the calendar isn't open") }
+        let file = folder.appending(path: ".ithil/events.json")
+        guard var object = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] else {
+            throw Failure(description: "events.json isn't an object")
+        }
+        object["schemaVersion"] = CalendarDocument.currentSchemaVersion + 1
+        let newer = try JSONSerialization.data(withJSONObject: object)
+        try newer.write(to: file, options: .atomic)
+        try await waitFor("the calendar to turn read-only", seconds: 30) { calendar.isReadOnly }
+        try check(!calendar.canEdit, "a calendar from a newer version could still be changed")
+        try await settle(seconds: 0.5)
+        try check(try Data(contentsOf: file) == newer, "the newer calendar was written over")
     }
 
     // MARK: - Helpers

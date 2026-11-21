@@ -29,6 +29,12 @@ struct ElenathApp: App {
         let model = AppModel(options: options, settings: settings, defaults: defaults)
         let files = FilesController(model: model.calendar)
         let notifications = NotificationsController(model: model.calendar, files: files)
+        model.calendar.isCopyingFiles = { [weak files] in
+            files?.isCopyingFiles ?? false
+        }
+        model.calendar.finishFileWork = { [weak files] timeout in
+            await files?.finishDiskWork(timeout: timeout) ?? true
+        }
         model.calendar.filesForNewEvent = { [weak files] urls, occurrence in
             files?.addFiles(urls, to: occurrence)
         }

@@ -146,4 +146,94 @@ struct CalendarSettingsTests {
         let stored = try DocumentCodec.decode(LibraryDocument.self, from: data).document
         #expect(stored.settings["appearance"] == .string("night"))
     }
+
+    // MARK: - Found in the review for 0.2.0
+
+    /// `calendar` or its `homes` that isn't an object at all may have named a sealed space for any subject:
+    /// every subject's home is unreadable, and the value is written back as it was found until the app
+    /// settles it.
+    @Test func damagedSettingsFailClosedAndAreKeptAsFound() {
+        let values: [JSONValue] = [.array([.string("x")]), .string("Red Cross"), .number(1), .null]
+        var stored: [[String: JSONValue]] = values.map { ["calendar": .object(["homes": $0])] }
+        stored += values.dropLast().map { ["calendar": $0] }
+        for damaged in stored {
+            let settings = CalendarSettings(from: damaged)
+            #expect(settings.isDamaged, "\(damaged)")
+            #expect(settings.entry(forSubject: physics) == .unreadable, "\(damaged)")
+            #expect(settings.entry(forSubject: nil) == SubjectHomeEntry.none)
+            var written: [String: JSONValue] = [:]
+            settings.written(into: &written)
+            #expect(written == damaged, "\(damaged)")
+        }
+    }
+
+    /// Settling damage gives each of the calendar's subjects an entry that can't be read (its events stay
+    /// sealed until it gets a home) and keeps what was found; a subject made later has no home, as usual.
+    @Test func settledDamageKeepsEachSubjectSealedUntilItHasAHome() {
+        let found: JSONValue = .array([.string("x")])
+        var settings = CalendarSettings(from: [
+            "calendar": .object(["id": .string(physics.uuidString), "homes": found])
+        ])
+        let settled = settings.settleDamage(subjects: [physics, shifts])
+        #expect(settled && !settings.isDamaged)
+        let settledAgain = settings.settleDamage(subjects: [physics])
+        #expect(!settledAgain)
+        #expect(settings.calendarID == physics)
+        #expect(settings.entry(forSubject: physics) == .unreadable)
+        #expect(settings.entry(forSubject: shifts) == .unreadable)
+        #expect(settings.entry(forSubject: UUID()) == SubjectHomeEntry.none)
+
+        var written: [String: JSONValue] = [:]
+        settings.written(into: &written)
+        let reread = CalendarSettings(from: written)
+        #expect(reread.entry(forSubject: physics) == .unreadable)
+        #expect(reread.entry(forSubject: shifts) == .unreadable)
+        guard case .object(let calendar) = written["calendar"] else {
+            Issue.record("No calendar settings were written")
+            return
+        }
+        #expect(calendar["foundUnreadable"] == found)
+
+        settings.setHome(SubjectHome(space: uni), forSubject: physics)
+        #expect(settings.entry(forSubject: physics) == .home(SubjectHome(space: uni)))
+    }
+
+    /// Two entries for one subject (keys that differ only in letter case): which counts would depend on the
+    /// order they are read in, so neither does.
+    @Test func twoEntriesForOneSubjectAreUnreadable() {
+        let sealed = SpaceID(UUID(uuidString: "5B1D0000-0000-4000-8000-000000000002")!)
+        let stored: [String: JSONValue] = [
+            "calendar": .object([
+                "homes": .object([
+                    shifts.uuidString: .object(["space": .string(sealed.rawValue.uuidString)]),
+                    shifts.uuidString.lowercased(): .object(["space": .string(uni.rawValue.uuidString)]),
+                ])
+            ])
+        ]
+        let settings = CalendarSettings(from: stored)
+        #expect(settings.entry(forSubject: shifts) == .unreadable)
+        var written: [String: JSONValue] = [:]
+        settings.written(into: &written)
+        #expect(written == stored)
+    }
+
+    /// A subject's new home is backed up at once, as a space's seal is: a library recovered from a backup
+    /// (on another Mac, without the safety copy) still keeps a sealed subject's events sealed.
+    @Test func aNewHomeSurvivesRecoveryFromABackup() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        let redCross = try await fixture.space("Red Cross", sealed: true)
+        fixture.clock.advance(by: 20 * 60)
+        var settings = await fixture.catalog.calendarSettings()
+        settings.setHome(SubjectHome(space: redCross.id), forSubject: shifts)
+        try await fixture.catalog.saveCalendarSettings(settings)
+
+        try FileManager.default.removeItem(at: fixture.url(".elenath/library.json"))
+        try? FileManager.default.removeItem(at: fixture.safety)
+        let catalog = LibraryCatalog(
+            root: fixture.root, safetyDirectory: fixture.safety, fileSystem: fixture.fileSystem,
+            timeSource: fixture.clock)
+        let snapshot = try await catalog.open()
+        #expect(snapshot.calendarSettings.entry(forSubject: shifts) == .home(SubjectHome(space: redCross.id)))
+    }
 }

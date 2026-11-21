@@ -85,7 +85,6 @@
     "1 minute before" : {},
     "A .zip file was copied as it is. To import a chat exported from WhatsApp, double-click the .zip in Finder, then drop the folder it makes." : {},
     "A library can't move into a folder inside itself." : {},
-    "A note is still being saved. Try again in a moment." : {},
     "A quiet day." : {},
     "A sealed space keeps its notes to itself: they never show up in search, links or suggestions anywhere else." : {},
     "A settings file in your library was damaged." : {},
@@ -277,6 +276,7 @@
     "Elenath found no library file here, and no backup to restore one from." : {},
     "Elenath is moving your library. Add the files again once it's done." : {},
     "Elenath is moving your library. Try again in a moment; your text is kept." : {},
+    "Elenath is still saving your changes. Try again in a moment." : {},
     "Elenath isn't allowed to use it." : {},
     "Elenath keeps your notes and their files in this folder." : {},
     "Elenath kept edits it couldn't save" : {},
@@ -313,6 +313,7 @@
     "File to" : {},
     "File to…" : {},
     "Files" : {},
+    "Files are still being copied into an event. Try again once they're done." : {},
     "Files can't be added right now, because no calendar is open for changes." : {},
     "Files · %lld" : {},
     "Find…" : {},
@@ -356,9 +357,22 @@
     "Ithil's calendar file can't be read, and neither can its backups." : {},
     "Ithil's calendar file was damaged, so its newest backup was used." : {},
     "Ithil's own alerts are still scheduled" : {},
+    "Its events keep their notes and files sealed in %@. Without a subject they would have no home, and their notes would show everywhere. Give them another subject inside %@, or delete them, first." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Its events keep their notes and files sealed in %1$@. Without a subject they would have no home, and their notes would show everywhere. Give them another subject inside %2$@, or delete them, first."
+          }
+        }
+      }
+    },
     "Its files are still in the old folder." : {},
+    "Its home can't be found, so its events count as sealed. Give the subject a home first, or give its events another subject." : {},
     "Its home is gone" : {},
     "Its home is gone. Its events' notes and files are hidden until you choose one." : {},
+    "Its subject can be changed inside %@." : {},
+    "Its subject can be changed where its notes are shown." : {},
     "Jot something down from any app." : {},
     "Jump to Note…" : {},
     "Jump to a note…" : {},
@@ -435,6 +449,7 @@
     "No notes match “%@”." : {},
     "No open tasks." : {},
     "No spaces yet" : {},
+    "No subject has its home in %@ yet, so this can't be a sealed event there. Give a subject that home in Settings." : {},
     "No subjects yet" : {},
     "None" : {},
     "Not Now" : {},
@@ -634,6 +649,7 @@
     "This Event Only" : {},
     "This calendar was made by a newer Ithil, and this version of Elenath can't read it." : {},
     "This calendar was saved by a newer version." : {},
+    "This can't be added to the calendar here." : {},
     "This event's notes and files are outside the sealed space you're working in." : {},
     "This event's notes, files and linked notes are sealed in its space." : {},
     "This is a repeating event. Change only this event, or this and all future events?" : {},
@@ -705,6 +721,7 @@
     "to" : {},
     "uni, lecture, exam" : {},
     "until %@" : {},
+    "“%@” can't be deleted yet" : {},
     "“%@” has %lld files. Its folder will be moved to the Trash." : {
       "localizations" : {
         "en" : {

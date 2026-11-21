@@ -215,11 +215,15 @@ public actor LibraryCatalog {
         CalendarSettings(from: library?.settings ?? [:])
     }
 
-    /// Writes Elenath's calendar settings into library.json, keeping its other settings.
+    /// Writes Elenath's calendar settings into library.json, keeping its other settings. A change is backed
+    /// up at once, as a space's seal is: a subject's home decides what is sealed, and a library recovered
+    /// from a backup must not have forgotten it.
     public func saveCalendarSettings(_ settings: CalendarSettings) async throws {
         var library = try editableLibrary()
+        let changed = CalendarSettings(from: library.settings) != settings
         settings.written(into: &library.settings)
-        try await save(library)
+        try await libraryStore.save(library, backingUpNewVersion: changed)
+        self.library = library
     }
 
     // MARK: - Spaces

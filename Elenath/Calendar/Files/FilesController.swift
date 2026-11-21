@@ -64,6 +64,8 @@ final class FilesController: CalendarChangeObserver {
     @ObservationIgnored private var needsAnotherReindex = false
     /// The last piece of disk work; the next one waits for it.
     @ObservationIgnored private var lastWork: Task<Void, Never>? = nil
+    /// Disk work asked for and not finished yet.
+    @ObservationIgnored private var diskWorkInFlight = 0
     @ObservationIgnored private var importJobs: [Occurrence.ID: FileImportJob] = [:]
     /// Files dropped on an occurrence while a copy into it was running; copied right after it.
     @ObservationIgnored private var queuedSources: [Occurrence.ID: [URL]] = [:]
@@ -474,12 +476,33 @@ final class FilesController: CalendarChangeObserver {
     @discardableResult
     private func enqueueWork(_ work: @escaping @MainActor @Sendable () async -> Void) -> Task<Void, Never> {
         let previous = lastWork
-        let task = Task { @MainActor in
+        diskWorkInFlight += 1
+        let task = Task { @MainActor [weak self] in
             _ = await previous?.value
             await work()
+            self?.diskWorkInFlight -= 1
         }
         lastWork = task
         return task
+    }
+
+    /// Whether files are being copied into an event, or wait to be.
+    var isCopyingFiles: Bool {
+        !imports.isEmpty || !queuedSources.isEmpty
+    }
+
+    /// Waits until the disk work asked for so far (copies, folders that follow their events, trashing) has
+    /// finished, or `timeout` passes. Returns whether it has.
+    func finishDiskWork(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        while diskWorkInFlight > 0, ContinuousClock.now < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(20))
+            } catch {
+                break
+            }
+        }
+        return diskWorkInFlight == 0
     }
 
     // MARK: - Following the library

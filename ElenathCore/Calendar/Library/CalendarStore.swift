@@ -173,8 +173,12 @@ public actor CalendarStore {
     /// for a file from a newer version (read as far as this version understands it). Missing reads as an
     /// empty calendar; a file that can't be read at all throws `unreadable`.
     private func readAsItIs() throws -> CalendarLoad {
-        let file = LibraryLayout.calendarMetadataFolder(in: libraryRoot).appending(
-            component: CalendarDocument.fileName, directoryHint: .notDirectory)
+        let metadata = LibraryLayout.calendarMetadataFolder(in: libraryRoot)
+        // `.ithil` must be the calendar's own folder, as the writing path requires: never read through a link.
+        if let info = fileSystem.info(at: metadata), !info.isDirectory || info.isSymbolicLink {
+            throw CalendarStoreError.notAFolder
+        }
+        let file = metadata.appending(component: CalendarDocument.fileName, directoryHint: .notDirectory)
         guard fileSystem.fileExists(at: file) else {
             return CalendarLoad(
                 document: CalendarDocument(id: knownCalendarID ?? UUID()), recovery: nil, isReadOnly: true,

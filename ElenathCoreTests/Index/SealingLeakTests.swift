@@ -579,6 +579,35 @@ struct SealingLeakTests {
         }
     }
 
+    @Test("Deleting a subject never brings its events out of a seal")
+    func deletingASealedSubjectIsRefused() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let calendarReach = CalendarReach(
+            workplace: .everywhere, spaces: await library.fixture.catalog.spaces(),
+            settings: await library.fixture.catalog.calendarSettings())
+        let shifts = try #require(library.calendar.subjects.first { $0.name == "Shifts" })
+        let lectures = try #require(library.calendar.subjects.first { $0.name == "Lectures" })
+        // Without a subject, the shift would have no home and its notes would read everywhere.
+        #expect(calendarReach.deletingSubjectWouldUnseal(shifts.id, in: library.calendar))
+        #expect(!calendarReach.deletingSubjectWouldUnseal(lectures.id, in: library.calendar))
+        var withoutShifts = library.calendar
+        withoutShifts.events.removeAll { $0.subjectID == shifts.id }
+        #expect(!calendarReach.deletingSubjectWouldUnseal(shifts.id, in: withoutShifts))
+        // A home that can't be read, or whose space is gone, may have been sealed.
+        var damaged = CalendarSettings(from: ["calendar": .object(["homes": .array([])])])
+        #expect(damaged.isDamaged)
+        let unreadable = CalendarReach(
+            workplace: .everywhere, spaces: await library.fixture.catalog.spaces(), settings: damaged)
+        #expect(unreadable.deletingSubjectWouldUnseal(lectures.id, in: library.calendar))
+        #expect(
+            !unreadable.mayReadContent(of: try #require(library.calendar.events.first { $0.title == "Night shift" })))
+        damaged.setHome(SubjectHome(space: SpaceID()), forSubject: lectures.id)
+        let gone = CalendarReach(
+            workplace: .everywhere, spaces: await library.fixture.catalog.spaces(), settings: damaged)
+        #expect(gone.deletingSubjectWouldUnseal(lectures.id, in: library.calendar))
+    }
+
     @Test("A space whose settings can't be read counts as sealed")
     func damagedSettingsFailClosed() async throws {
         let library = try await Library()

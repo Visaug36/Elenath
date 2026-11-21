@@ -50,6 +50,8 @@ final class DemoSelfCheck {
             try await step("open the panels and Settings") { try await self.openPanels() }
             try await step("switch the appearance") { try await self.switchAppearance() }
             try await step("rebuild the index") { try await self.rebuildIndex() }
+            // Last, since the calendar can't be changed afterwards.
+            try await step("a calendar from a newer version arrives") { try await self.newerCalendarArrives() }
         } catch {
             say("SELF-CHECK FAILED in \"\(currentStep)\": \(error)")
             exit(1)

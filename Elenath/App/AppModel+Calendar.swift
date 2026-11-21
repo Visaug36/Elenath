@@ -15,6 +15,9 @@ extension AppModel {
         calendar.showCalendar = { [weak self] in
             self?.showCalendar()
         }
+        calendar.workplaceChanged = { [weak self] in
+            self?.workplaceMayHaveChanged()
+        }
     }
 
     /// The library's spaces or settings were read again: the calendar follows, and opens once a space from

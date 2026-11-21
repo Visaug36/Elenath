@@ -168,13 +168,14 @@ struct BringInIthilSheet: View {
                     }
                 }
                 guard !Task.isCancelled else { return }
-                // The calendar may have changed while the files were copied: merge into it as it is now.
-                var report = CalendarImportReport()
-                let merged = CalendarImport.merge(result.document, into: model.library, report: &report)
-                model.bringIn(merged)
-                let known = Set(before.subjects.map(\.id))
-                let added = merged.subjects.filter { !known.contains($0.id) }
-                phase = .done(result.report, newSubjects: added)
+                // The calendar may have changed while the files were copied: only the Ithil calendar is merged
+                // into it as it is now, so nothing deleted meanwhile comes back.
+                let current = model.library
+                let merged = CalendarImport.merge(result, into: current)
+                model.bringIn(merged.document)
+                let known = Set(current.subjects.map(\.id))
+                let added = merged.document.subjects.filter { !known.contains($0.id) }
+                phase = .done(merged.report, newSubjects: added)
             } catch is CancellationError {
                 phase = .failed(
                     String(

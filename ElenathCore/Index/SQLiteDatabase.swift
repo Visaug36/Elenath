@@ -23,6 +23,7 @@ enum SQLiteValue: Sendable {
     case integer(Int64)
     case real(Double)
     case text(String)
+    case blob(Data)
 
     static func optional(_ text: String?) -> SQLiteValue {
         text.map { .text($0) } ?? .null
@@ -66,6 +67,14 @@ struct SQLiteRow {
         guard let pointer = sqlite3_column_text(statement, column) else { return nil }
         let count = Int(sqlite3_column_bytes(statement, column))
         return String(decoding: UnsafeBufferPointer(start: pointer, count: count), as: UTF8.self)
+    }
+
+    /// The column's bytes, or nil when it is NULL.
+    func blob(_ column: Int32) -> Data? {
+        guard sqlite3_column_type(statement, column) != SQLITE_NULL else { return nil }
+        let count = Int(sqlite3_column_bytes(statement, column))
+        guard count > 0, let pointer = sqlite3_column_blob(statement, column) else { return Data() }
+        return Data(bytes: pointer, count: count)
     }
 
     /// The column's text, or "" when it is NULL.
@@ -213,6 +222,13 @@ final class SQLiteDatabase {
                 status = bytes.withUnsafeBufferPointer { buffer in
                     sqlite3_bind_text(
                         statement, index, buffer.baseAddress, Int32(clamping: buffer.count - 1),
+                        unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+                }
+            case .blob(let data):
+                // SQLITE_TRANSIENT, as for text: SQLite copies the bytes before the call returns.
+                status = data.withUnsafeBytes { buffer in
+                    sqlite3_bind_blob(
+                        statement, index, buffer.baseAddress, Int32(clamping: buffer.count),
                         unsafeBitCast(-1, to: sqlite3_destructor_type.self))
                 }
             }

@@ -19,6 +19,9 @@ public struct IndexReport: Hashable, Sendable {
     public var unchanged = 0
     /// Notes that are the same note under a new name or in a new folder. Their links can be repaired.
     public var moved: [NoteMove] = []
+    /// Vectors made by an embedding pass, and whether chunks are still waiting for one.
+    public var vectorsMade = 0
+    public var vectorsPending = false
 
     public init() {}
 
@@ -50,9 +53,14 @@ public actor Indexer {
     private var tails: [Container: Task<Void, Never>] = [:]
     private var isPaused = false
     private var running = 0
+    private var embedder: (any Embedder)?
+    /// The containers whose models were compared with the index's stamps in this embedding pass.
+    private var checkedStamps: Set<Container> = []
 
     /// How many notes are read and written in one transaction.
     private static let chunkSize = 100
+    /// How many chunks are embedded at a time; other passes may run between batches.
+    static let embeddingBatch = 16
 
     public init(
         catalog: LibraryCatalog, indexDirectory: URL, fileSystem: any FileSystem,
@@ -103,6 +111,94 @@ public actor Indexer {
             }
         }
         return reports
+    }
+
+    // MARK: - Vectors (meaning)
+
+    /// The embedder whose vectors meaning search uses; nil leaves search to keywords.
+    public func setEmbedder(_ embedder: (any Embedder)?) {
+        self.embedder = embedder
+        checkedStamps = []
+    }
+
+    /// Makes vectors for the container's chunks that have none, a batch at a time with the models the embedder
+    /// has now. Other passes over the container run between batches, so a save is never kept waiting. A model
+    /// whose stamp changed (a macOS update) has its script's vectors made again; text in a script without a
+    /// model asks the embedder for one. Waits while paused.
+    @discardableResult
+    public func embed(_ container: Container) async throws -> Int {
+        checkedStamps.remove(container)
+        var made = 0
+        while true {
+            try await waitWhilePaused()
+            let report = try await serialized(container) {
+                try await self.replacingDamaged(container) { try await self.performEmbeddingBatch(container) }
+            }
+            made += report.vectorsMade
+            guard report.vectorsPending, report.vectorsMade > 0 || report.changedAnything else { break }
+        }
+        return made
+    }
+
+    /// Embeds the Inbox and every space, then lets the models rest. A container that fails is logged and
+    /// skipped.
+    @discardableResult
+    public func embedAll() async -> Int {
+        guard let embedder else { return 0 }
+        var made = 0
+        let containers = [Container.inbox] + (await catalog.spaces()).map { Container.space($0.id) }
+        for container in containers {
+            do {
+                made += try await embed(container)
+            } catch is CancellationError {
+                break
+            } catch {
+                log.error("Could not make vectors for a container", private: String(describing: error))
+            }
+        }
+        await embedder.rest()
+        return made
+    }
+
+    private func performEmbeddingBatch(_ container: Container) async throws -> IndexReport {
+        var report = IndexReport()
+        guard let embedder else { return report }
+        let index = try index(for: container)
+        let models = await embedder.models()
+        var byScript: [String: EmbeddingModel] = [:]
+        for model in models {
+            byScript[model.script] = model
+        }
+        if !checkedStamps.contains(container) {
+            checkedStamps.insert(container)
+            try index.transaction {
+                for model in models where try index.modelStamp(forScript: model.script) != model.stamp.key {
+                    try index.forgetVectors(script: model.script)
+                    try index.setModelStamp(model.stamp, forScript: model.script)
+                }
+            }
+            for script in try index.waitingScripts(besides: Set(byScript.keys)) {
+                await embedder.requestModel(for: script)
+            }
+        }
+        let batch = try index.pendingChunks(scripts: Set(byScript.keys), limit: Indexer.embeddingBatch)
+        for (script, chunks) in Dictionary(grouping: batch, by: \.script) {
+            guard let model = byScript[script] else { continue }
+            let vectors = try await embedder.vectors(for: chunks.map(\.text), with: model)
+            try index.transaction {
+                for (offset, chunk) in chunks.enumerated() {
+                    if offset < vectors.count, let vector = vectors[offset], vector.count == model.dimension {
+                        try index.setVector(vector, model: model.stamp, forChunk: chunk.id)
+                        report.vectorsMade += 1
+                    } else {
+                        try index.setUnreadable(chunk: chunk.id, model: model.stamp)
+                        report.updated += 1
+                    }
+                }
+            }
+        }
+        report.vectorsPending = batch.count == Indexer.embeddingBatch
+        return report
     }
 
     /// Deletes the index of a space that no longer exists.

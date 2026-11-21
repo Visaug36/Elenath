@@ -127,6 +127,24 @@ struct FileRecord: Hashable, Sendable {
 }
 
 /// What the indexer needs to tell whether a note file changed, without reading it.
+/// A chunk waiting for its vector, with the text the embedder reads.
+struct PendingChunk: Sendable {
+    var id: Int64
+    var script: String
+    var text: String
+}
+
+/// A chunk's vector and where the chunk is.
+struct ChunkVector: Sendable {
+    var chunk: Int64
+    /// The note it is from, or nil for a file's chunk.
+    var note: Int64?
+    var fileKey: String?
+    var page: Int?
+    var range: NSRange
+    var vector: [Float]
+}
+
 struct IndexedNoteState: Sendable {
     var rowID: Int64
     var path: ItemPath
@@ -183,7 +201,7 @@ struct IndexFilter: Sendable {
 /// `Reach` which databases a question may read.
 final class SpaceIndex {
     /// A database written with another version is emptied and filled again.
-    static let schemaVersion: Int64 = 3
+    static let schemaVersion: Int64 = 4
 
     let container: Container
     private let database: SQLiteDatabase
@@ -223,7 +241,7 @@ final class SpaceIndex {
             if version == SpaceIndex.schemaVersion {
                 return
             }
-            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram"] {
+            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram", "chunks", "meta"] {
                 try database.execute("DROP TABLE IF EXISTS \(table)")
             }
             try database.execute(SpaceIndex.schema)
@@ -289,6 +307,26 @@ final class SpaceIndex {
             is_folder INTEGER NOT NULL,
             modified REAL,
             byte_count INTEGER NOT NULL
+        ) WITHOUT ROWID;
+        CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY,
+            note INTEGER,
+            file_key TEXT,
+            page INTEGER,
+            location INTEGER NOT NULL,
+            length INTEGER NOT NULL,
+            headings TEXT NOT NULL,
+            text TEXT NOT NULL,
+            script TEXT,
+            model TEXT,
+            vector BLOB
+        );
+        CREATE INDEX chunks_note ON chunks(note);
+        CREATE INDEX chunks_file ON chunks(file_key);
+        CREATE INDEX chunks_model ON chunks(model);
+        CREATE TABLE meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         ) WITHOUT ROWID;
         CREATE VIRTUAL TABLE note_text USING fts5(title, body, tags, tokenize = "unicode61 remove_diacritics 2");
         CREATE VIRTUAL TABLE note_trigram USING fts5(
@@ -397,7 +435,122 @@ final class SpaceIndex {
                 "INSERT INTO tasks (note, text, is_done, location, position) VALUES (?, ?, ?, ?, ?)",
                 [id, .text(task.text), .bool(task.isDone), .integer(Int64(task.location)), .integer(Int64(position))])
         }
+        try storeChunks(Chunker.chunks(ofNote: record.body), note: rowID)
         return rowID
+    }
+
+    // MARK: - Chunks and vectors (meaning)
+
+    /// How headings are joined in the `headings` column.
+    static let headingSeparator: Character = "\u{1F}"
+
+    /// The chunks of a note, without vectors yet: the indexer's embedding pass makes those.
+    private func storeChunks(_ chunks: [Chunk], note rowID: Int64) throws {
+        for chunk in chunks {
+            try database.run(
+                """
+                INSERT INTO chunks (note, file_key, page, location, length, headings, text, script, model, vector)
+                VALUES (?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)
+                """,
+                [
+                    .integer(rowID), .optional(chunk.page.map(Int64.init)), .integer(Int64(chunk.range.location)),
+                    .integer(Int64(chunk.range.length)),
+                    .text(chunk.headings.joined(separator: String(SpaceIndex.headingSeparator))),
+                    .text(chunk.text), .optional(Script.dominant(in: chunk.embeddingText)),
+                ])
+        }
+        if !chunks.isEmpty {
+            try bumpChunksVersion()
+        }
+    }
+
+    private static func headings(_ stored: String) -> [String] {
+        stored.split(separator: headingSeparator).map(String.init)
+    }
+
+    /// Chunks without a vector in one of `scripts`, oldest first, with the text the embedder reads.
+    func pendingChunks(scripts: Set<String>, limit: Int) throws -> [PendingChunk] {
+        guard !scripts.isEmpty else { return [] }
+        let marks = Array(repeating: "?", count: scripts.count).joined(separator: ", ")
+        return try database.query(
+            "SELECT id, script, headings, text FROM chunks WHERE vector IS NULL AND script IN (\(marks)) ORDER BY id LIMIT ?",
+            scripts.sorted().map { .text($0) } + [.integer(Int64(limit))]
+        ) { row in
+            let chunk = Chunk(
+                headings: SpaceIndex.headings(row.string(2)), text: row.string(3),
+                range: NSRange(location: 0, length: 0))
+            return PendingChunk(id: row.int(0), script: row.string(1), text: chunk.embeddingText)
+        }
+    }
+
+    /// The scripts of chunks still waiting for a vector, other than `scripts`.
+    func waitingScripts(besides scripts: Set<String>) throws -> Set<String> {
+        let found = try database.query(
+            "SELECT DISTINCT script FROM chunks WHERE vector IS NULL AND script IS NOT NULL"
+        ) { $0.string(0) }
+        return Set(found).subtracting(scripts)
+    }
+
+    func setVector(_ vector: [Float], model: EmbedderStamp, forChunk id: Int64) throws {
+        try database.run(
+            "UPDATE chunks SET model = ?, vector = ? WHERE id = ?",
+            [.text(model.key), .blob(VectorMath.encode(vector)), .integer(id)])
+        try bumpChunksVersion()
+    }
+
+    /// Marks a chunk the model couldn't read, so it isn't asked again until its note changes.
+    func setUnreadable(chunk id: Int64, model: EmbedderStamp) throws {
+        try database.run("UPDATE chunks SET model = ?, vector = X'' WHERE id = ?", [.text(model.key), .integer(id)])
+    }
+
+    /// The model last used for a script's vectors; when it differs from the model now, its vectors are made
+    /// again (`forgetVectors(script:)`).
+    func modelStamp(forScript script: String) throws -> String? {
+        try database.first("SELECT value FROM meta WHERE key = ?", [.text("model." + script)]) { $0.string(0) }
+    }
+
+    func setModelStamp(_ stamp: EmbedderStamp, forScript script: String) throws {
+        try database.run(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [.text("model." + script), .text(stamp.key)])
+    }
+
+    func forgetVectors(script: String) throws {
+        try database.run("UPDATE chunks SET model = NULL, vector = NULL WHERE script = ?", [.text(script)])
+        try bumpChunksVersion()
+    }
+
+    /// Goes up whenever chunks or their vectors change, so a reader knows when what it holds is stale.
+    func chunksVersion() throws -> Int64 {
+        try database.first("SELECT value FROM meta WHERE key = 'chunks_version'") { Int64($0.string(0)) ?? 0 } ?? 0
+    }
+
+    private func bumpChunksVersion() throws {
+        try database.run(
+            """
+            INSERT INTO meta (key, value) VALUES ('chunks_version', '1')
+            ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+            """)
+    }
+
+    /// Every vector a model made, with where its chunk is: what meaning search compares a question with.
+    func chunkVectors(model: EmbedderStamp, dimension: Int) throws -> [ChunkVector] {
+        try database.query(
+            "SELECT id, note, file_key, page, location, length, vector FROM chunks WHERE model = ? AND length(vector) = ?",
+            [.text(model.key), .integer(Int64(dimension * 4))]
+        ) { row -> ChunkVector? in
+            guard let data = row.blob(6), let vector = VectorMath.decode(data, dimension: dimension) else { return nil }
+            return ChunkVector(
+                chunk: row.int(0), note: row.optionalInt(1), fileKey: row.text(2),
+                page: row.optionalInt(3).map(Int.init),
+                range: NSRange(location: Int(row.int(4)), length: Int(row.int(5))), vector: vector)
+        }.compactMap { $0 }
+    }
+
+    /// A chunk's headings and text.
+    func chunkText(_ id: Int64) throws -> (headings: [String], text: String)? {
+        try database.first("SELECT headings, text FROM chunks WHERE id = ?", [.integer(id)]) { row in
+            (SpaceIndex.headings(row.string(0)), row.string(1))
+        }
     }
 
     /// Records that a file was touched but holds the same bytes.
@@ -417,6 +570,8 @@ final class SpaceIndex {
 
     private func removeDerived(rowID: Int64) throws {
         let id = SQLiteValue.integer(rowID)
+        try database.run("DELETE FROM chunks WHERE note = ?", [id])
+        try bumpChunksVersion()
         try database.run("DELETE FROM note_text WHERE rowid = ?", [id])
         try database.run("DELETE FROM note_trigram WHERE rowid = ?", [id])
         try database.run("DELETE FROM links WHERE source = ?", [id])
@@ -441,7 +596,7 @@ final class SpaceIndex {
     /// Empties the index. It fills again from the folder.
     func clear() throws {
         try database.transaction {
-            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram"] {
+            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram", "chunks", "meta"] {
                 try database.run("DELETE FROM \(table)")
             }
         }

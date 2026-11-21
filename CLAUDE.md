@@ -361,6 +361,13 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-21: **Phase 4 (the calendar) built, reviewed and green; 0.2.0 dated.** Ithil 1.0.0 is in: its
+  core and tests ported, its views fitted into Elenath's window, the calendar in `<library>/Calendar`,
+  Bring In, subject homes and the sealing exception. The release review (two independent reviewers) found
+  15 problems, all fixed (see "The review for 0.2.0"); the undo grouping from phase 3 was also corrected.
+  CI is green on macOS 26 and 27: 593 tests, the String Catalog, the arm64 Release archive, zero warnings,
+  and the crash check through every calendar step. Next: the PR, merge, the Release workflow publishing
+  0.2.0, then tell the user what to try (docs/RELEASE_CHECKLIST.md, section 5) and start phase 5 (meaning).
 - 2026-11-16: **0.1.1 published; phase 3 (the review) done.** The review was merged (https://github.com/Visaug36/Elenath/pull/3) and the Release workflow published https://github.com/Visaug36/Elenath/releases/tag/v0.1.1 as a prerelease, with `Elenath-0.1.1.zip` and its SHA-256: the reworked workflow (a read-only build job, then a small publish job that runs no project code) works, creating the tag itself as before. The user was given what only their Mac can test (docs/RELEASE_CHECKLIST.md, sections 4 and 5, and the diagnostics report). Next: phase 4, the calendar, with contracts in docs/ARCHITECTURE.md and screens in docs/DESIGN.md before code.
 - 2026-11-16: **Phase 3 (the review) built; CI green, the crash check included.** 277 core tests pass locally and on macOS 26 and 27, with the String Catalog, the Release archive and zero warnings, and the self-check walks through every step on the runner. The crash check found three more bugs on the way (the `[[` list blocking a run without a keyboard, overlapping undo steps, the title field renaming a note back), all fixed. A timing test that flaked once on macOS 27 now takes its best of three runs. Next: a PR, merge, and the Release workflow publishing 0.1.1; then tell the user what only they can test (docs/RELEASE_CHECKLIST.md, sections 4 and 5), and start phase 4 (the calendar).
 - 2026-11-15: **The user answered the plan's questions; phase 3 (review) started.**

@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-11-21
 
 The calendar moves in: everything Ithil 1.0.0 does, inside Elenath, so Elenath is the only app to open.
 Ithil's code, tests and screens came across as they were, fitted into Elenath's window.
@@ -160,7 +160,8 @@ The foundation. This version is only the window: there are no notes yet.
   version 0.1 (docs/ARCHITECTURE.md).
 - A `-demo` launch argument with throwaway settings, for screenshots.
 
-[Unreleased]: https://github.com/Visaug36/Elenath/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Visaug36/Elenath/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Visaug36/Elenath/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Visaug36/Elenath/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Visaug36/Elenath/releases/tag/v0.1.0
 [0.0.1]: https://github.com/Visaug36/Elenath/releases/tag/v0.0.1

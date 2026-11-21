@@ -555,7 +555,7 @@ in Elenath's container (`Index/<library id>/<space id>.sqlite`), never inside th
 system's library. Its FTS5 and trigram tokenizer are checked by `SQLiteProbeTests`.
 
 Version 0.1 indexes notes (title, text, links, tags, tasks) and the names of other files. Chunks, vectors and
-the text of PDFs and images come in Phase 3.
+the text of PDFs, pictures and event files come in 0.3 ("Meaning" below).
 
 ### Sealing: `Reach` is the choke point
 
@@ -1171,13 +1171,134 @@ Ithil's app layer came across the same way, fitted into Elenath's window:
 - **Undo:** each change registers a step that puts the whole calendar back as it was (`restore`), and Redo
   the same way. Edits of one subject within two seconds share a step, as in Ithil.
 
+## Meaning (`ElenathCore/Meaning`, `ElenathCore/Index`): phase 5
+
+Search by meaning, related notes, and the text inside PDFs, pictures and event files (0.3). Everything stays in
+the index, a cache rebuilt at will, and every question still goes through `Retrieval` and `Reach`.
+
+### Chunks
+
+```swift
+/// A stretch of a note, a PDF page or a picture's text: what one vector stands for.
+public struct Chunk: Hashable, Sendable {
+    public var headings: [String]       // the heading path above it ("Lecture 7 › Torque"), for notes
+    public var text: String             // plain text, Markdown markers left as they are
+    public var range: NSRange           // UTF-16 range in the note's body, or in the page's text
+    public var page: Int?               // 1-based PDF page; nil for notes and pictures
+}
+public enum Chunker {
+    /// A note by its Markdown structure: each heading starts a chunk, paragraphs gather until about
+    /// `targetCharacters` (≈ 250 tokens at 4 characters each), and a paragraph longer than
+    /// `maximumCharacters` is cut at sentence ends. Code blocks and tables stay whole up to the maximum.
+    public static func chunks(ofNote text: String) -> [Chunk]
+    /// Text by pages (PDFs): a chunk never spans pages; long pages are cut as above.
+    public static func chunks(ofPages pages: [String]) -> [Chunk]
+    public static let targetCharacters: Int      // 1,000
+    public static let maximumCharacters: Int     // 1,600, under the embedder's sequence length
+}
+```
+
+- Linear in the text (`HostileInputTests.expectLinear`), and at most `NoteLimits` of a note is read.
+- A chunk's text is what the embedder sees, with its heading path in front ("Torque — …") so a paragraph
+  keeps its topic.
+
+### The embedder
+
+```swift
+public struct EmbedderStamp: Hashable, Codable, Sendable {
+    public var identifier: String       // the model, e.g. NLContextualEmbedding's modelIdentifier
+    public var revision: Int
+}
+public protocol Embedder: Sendable {
+    /// The models this embedder has on this Mac right now, by the script they read. Asked at run time,
+    /// never assumed: a script without a model (or whose assets aren't on the Mac yet) is left to keyword
+    /// search.
+    func models() async -> [EmbeddingModel]
+    /// One normalized vector per text (mean of its token vectors), or nil for a text the model can't read.
+    func vectors(for texts: [String], with model: EmbeddingModel) async throws -> [[Float]?]
+}
+public struct EmbeddingModel: Hashable, Codable, Sendable {
+    public var stamp: EmbedderStamp
+    public var script: String           // ISO 15924 ("Latn", "Cyrl", "Hani"…)
+    public var dimension: Int
+}
+```
+
+- **The real one** (`ContextualEmbedder`, behind `#if canImport(NaturalLanguage)`) uses
+  `NLContextualEmbedding(script:)`: `hasAvailableAssets` and `requestAssets()` (the system downloads models
+  over the air; whether it does without a network entitlement is on the diagnostics report), `load()`,
+  `embeddingResult(for:language:)`, then the mean of `enumerateTokenVectors` over the text, normalized. A
+  chunk longer than the model's `maximumSequenceLength` tokens is truncated by the model; chunks are cut
+  short enough that this is rare.
+- **Which model reads a text** is decided by its script (`NLLanguageRecognizer`'s dominant language, then its
+  script). Vectors of different models are never compared: a chunk stores the stamp of its model, and a
+  question is embedded with each model its own text needs.
+- **Tests** use `HashingEmbedder` (in the tests): words hashed into a small vector, so related texts share
+  words and score close, deterministic on every machine.
+
+### Vectors in the index
+
+- Schema 4 adds `chunks(id, owner_kind, owner, page, location, length, headings, text, model, vector)` and
+  `chunk_text` (FTS5 over the chunks, for "open at the matching spot"), and `meta(key, value)` holding each
+  model's stamp. A vector is a BLOB of `dimension` little-endian Float32s.
+- **Incremental:** a note's chunks are made again only when its content hash changed; a file's when its size
+  or date did. Vectors are made afterwards, in the background, a batch at a time; keyword search works from
+  the first moment, and meaning search uses what is there.
+- **Stamped:** when a model's stamp in `meta` differs from the model's now (a macOS update), that model's
+  vectors are dropped and made again. Settings › Files › Rebuild Index drops everything.
+- **Pausable:** `Indexer.setPaused(_:)`; it also waits while the Mac is in Low Power Mode.
+- Cosine similarity is a dot product of normalized vectors, with Accelerate (`vDSP_dotpr`) behind
+  `#if canImport(Accelerate)` and a plain loop elsewhere.
+
+### Hybrid search
+
+- `Retrieval.search` keeps its keyword ranking (FTS5 words, then trigrams, then file names) and adds a
+  meaning ranking: the question's vector against every chunk the workplace may read (through `Reach`), best
+  chunk per note or file. The two lists are fused by **reciprocal rank fusion** (score = Σ 1 / (60 + rank)),
+  and the snippet is the best chunk's text with the matching words marked.
+- **Keyword first:** questions of one or two characters, and questions no model can read, are keyword only,
+  and keyword results never wait for vectors. The app shows keyword results at once and fuses the meaning
+  results in when they arrive.
+- **Measured, not assumed:** `RetrievalBenchmark` holds demo questions with the notes they should find
+  (from `DemoLibrary`); its score (the share of questions whose note is in the top 5) is in the diagnostics
+  report on the real embedder, and decides between embedder options.
+
+### Related notes
+
+```swift
+// Retrieval
+/// Notes about the same things as `note`, best first: chunk vectors close to the note's own, ignoring notes
+/// it already links to or that link to it. Only from containers the workplace may read.
+public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [NoteHit]
+```
+
+- Shown under the note, after the backlinks ("Related"), and later used by Nano bot's Link job.
+- The leak tests ask `related(to:from:limit:)` from every workplace: a sealed space's marker never appears from
+  outside, and nothing from outside appears inside it.
+
+### PDFs, pictures and event files
+
+```swift
+public protocol TextExtractor: Sendable {
+    func pages(ofPDF url: URL) async -> [String]?          // PDFKit; nil when it isn't a PDF it can read
+    func text(ofImage url: URL) async -> String?           // Vision text recognition
+}
+```
+
+- Behind `#if canImport(PDFKit)` and `#if canImport(Vision)`; tests use a fake. Limits as for notes: at most 200
+  pages and 4 MB of text per PDF, pictures up to 100 megapixels.
+- **Files in spaces** (attachments and other files) get chunks of their text, found by search and related
+  notes like notes are, opened in their app or Quick Look.
+- **Event files** are indexed into their subject's home space (`CalendarReach.home`), so that space's seal
+  applies to them; files of events without a home, or whose home can't be used, are indexed nowhere. The app
+  hands the indexer each homed occurrence's folder (`EventFolders`); a search hit opens the event's folder.
+
 ## Later phases
 
 Their contracts are written before each phase starts.
 
 | Phase | Adds |
 |---|---|
-| 5. Meaning | chunking, `Embedder`, vectors, hybrid ranking, related notes, PDF and image text (event files too) |
 | 6. Nano bot | `BotModel`, the job pipelines, proposals, the activity log, learning, the self-test, the calendar tools |
 | 7. Boards and charts | the board package, canvas geometry, chart blocks |
 | 8. Goals and the Sky | goal pages, the cached layout |

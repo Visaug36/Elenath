@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Settings window: General, Spaces and Files.
+/// The Settings window: General, Spaces, Calendar, Subjects and Files.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -11,6 +11,14 @@ struct SettingsView: View {
             SpacesSettingsView()
                 .tabItem {
                     Label("Spaces", systemImage: "circle.grid.2x2")
+                }
+            CalendarSettingsView()
+                .tabItem {
+                    Label("Calendar", systemImage: "calendar")
+                }
+            SubjectsSettingsView()
+                .tabItem {
+                    Label("Subjects", systemImage: "circle.hexagongrid")
                 }
             FilesSettingsView()
                 .tabItem {

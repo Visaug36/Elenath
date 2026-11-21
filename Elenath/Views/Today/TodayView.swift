@@ -1,9 +1,11 @@
 import ElenathCore
 import SwiftUI
 
-/// The landing screen: what waits in the Inbox, open tasks, and what was edited lately.
+/// The landing screen: what's up next in the calendar, what waits in the Inbox, open tasks, and what was
+/// edited lately.
 ///
-/// Today reads the spaces that mix. A sealed space is not in it: it has its own page.
+/// Today reads the spaces that mix. A sealed space is not in it: it has its own page. Up next is the
+/// calendar exception: events from every space, by title, time and location.
 struct TodayView: View {
     @Environment(AppModel.self) private var model
     @State private var inbox: [NoteHit] = []
@@ -16,6 +18,7 @@ struct TodayView: View {
             VStack(spacing: 0) {
                 header
                 VStack(alignment: .leading, spacing: 14) {
+                    upNextCard
                     inboxCard
                     tasksCard
                     recentCard
@@ -48,6 +51,20 @@ struct TodayView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 96)
         .starryBackground(.backgroundWindow)
+    }
+
+    private var upNextCard: some View {
+        SectionCard(title: Text("Up next")) {
+            Button("Open Calendar") {
+                model.go(to: .calendar)
+            }
+            .buttonStyle(.plain)
+            .font(Typography.footnote)
+            .foregroundStyle(Color.accentText)
+            .padding(.trailing, 10)
+        } content: {
+            TodayUpNext()
+        }
     }
 
     private var inboxCard: some View {

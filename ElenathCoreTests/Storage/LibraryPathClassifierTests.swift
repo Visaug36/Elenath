@@ -55,4 +55,34 @@ struct LibraryPathClassifierTests {
             LibraryPathClassifier.classify(paths: ["/somewhere/else"], rootPath: root, spaces: [uni]).reloadsCatalog)
         #expect(!classify("/Uni/Physics/space.json").reloadsCatalog)
     }
+
+    @Test("The calendar's file reloads the calendar; its event folders refresh their files")
+    func calendar() {
+        let saved = classify("/Calendar/.ithil/events.json")
+        #expect(saved.reloadsCalendar && !saved.calendarFiles && !saved.reloadsCatalog && saved.containers.isEmpty)
+
+        let files = classify(
+            "/Calendar/2026-11-16/14.00 Physics Lecture/Slides.pdf", "/Calendar/2026-11-16/14.00 Lab/.ithil-event")
+        #expect(files.calendarFiles && !files.reloadsCalendar && !files.reloadsCatalog && files.containers.isEmpty)
+
+        let folder = classify("/Calendar")
+        #expect(folder.reloadsCalendar && folder.calendarFiles)
+
+        let noise = classify(
+            "/Calendar/.ithil/backups/events-20261116-143000.json", "/Calendar/.ithil/events.corrupt-1.json",
+            "/Calendar/.ithil/.events.json.tmp", "/Calendar/.DS_Store", "/Calendar/2026-11-16/.DS_Store")
+        #expect(noise.isEmpty)
+
+        // A space from Elenath 0.1 called "Calendar" is still a space until it is renamed.
+        let oldSpace = Space(name: "Calendar")
+        let change = LibraryPathClassifier.classify(
+            paths: [root + "/Calendar/Timetable.md"], rootPath: root, spaces: [uni, oldSpace])
+        #expect(change.containers == [.space(oldSpace.id)])
+        #expect(!change.reloadsCalendar && !change.calendarFiles)
+
+        var merged = LibraryChange()
+        merged.merge(saved)
+        merged.merge(files)
+        #expect(merged.reloadsCalendar && merged.calendarFiles && !merged.isEmpty)
+    }
 }

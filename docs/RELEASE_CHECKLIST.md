@@ -25,7 +25,12 @@ with the reason it stays. Cover at least:
 - [ ] **Privacy.** Logs, the diagnostics report and crash output never contain note text, titles, file names
       or paths (`scripts/check-rules.sh` rule 5 catches the obvious ones; read the rest).
 - [ ] **Sealing.** Try to break it: every `Retrieval` query from every workplace, the editor's rescue and
-      Recovery paths, imports, and anything new in this release (`SealingLeakTests`).
+      Recovery paths, imports, and anything new in this release (`SealingLeakTests`). From 0.2 the calendar
+      is the one exception: a sealed event's title, time, location, file count and Open Files show
+      everywhere, and nothing else of it does (`CalendarReach`, the calendar's leak tests): check every
+      surface that shows events, notifications and the menu bar included.
+- [ ] **Bring In.** "Bring in my Ithil calendar" never writes inside the Ithil folder, copies and never moves,
+      follows no links out of it, and brings nothing in twice.
 - [ ] **The repository.** No personal data added to the history. Workflows have the least permissions they
       need, actions pinned to commits, and nothing a pull request from a fork could use to push, release or
       read secrets (`scripts/check-rules.sh` rule 6).
@@ -58,8 +63,8 @@ with the reason it stays. Cover at least:
 - [ ] First launch: onboarding, choosing a folder (an empty one, and one that already holds Markdown files),
       and the first spaces.
 - [ ] Quit and open again: the library opens by itself, quickly.
-- [ ] ⌥⇧Space in another app opens Quick Capture; ↩ saves to the Inbox, ⌘↩ saves and opens, "uni: …" files
-      it in Uni, esc closes. Changing the shortcut in Settings works, and ⌥Space still belongs to Ithil.
+- [ ] ⌥Space in another app opens Quick Capture (⌥⇧Space before 0.2); ↩ saves to the Inbox, ⌘↩ saves and
+      opens, "uni: …" files it in Uni, esc closes. Changing the shortcut in Settings works.
 - [ ] Typing in a long note doesn't stutter. Headings, lists, quotes, code, tables, task boxes, links and tags
       are styled as you type; ⌘-click follows a link; `[[` completes titles; ticking a box changes the file.
 - [ ] Dropping a picture or a PDF on a note copies it into `Attachments` and shows it under its line.
@@ -91,7 +96,32 @@ with the reason it stays. Cover at least:
 - [ ] Rename a note in its title field, move it with drag and drop, then ⌘Z twice: it goes back, then gets
       its old name back, one step at a time.
 
-## 5. Only a real Mac can tell
+## 5. The calendar (from 0.2)
+
+- [ ] Bring in your Ithil calendar (Settings › Calendar): the counts match, every event's files are in its
+      folder under `Calendar` in the library, your Ithil folder is unchanged (compare it in Finder), and
+      bringing it in again brings in nothing new. Then stop Ithil's alerts as the sheet says, and quit Ithil.
+- [ ] With Ithil still running, ⌥Space: Elenath says the shortcut is taken instead of failing silently.
+- [ ] Week, Day and Month; ⌘1, ⌘2, ⌘3 from anywhere; ⌘T; ⌘← and ⌘→; ⌘N in the calendar makes an event and a
+      note elsewhere. Drag an event to move it and its edge to resize it; ⌘Z puts it back, one step at a time.
+- [ ] An event with an alert: quit Elenath, and the notification still arrives ("Physics Lecture in 10 min",
+      with the file count); Open Files in it opens the event's folder in Finder.
+- [ ] Drop a large file (a gigabyte or two) on an event: the window stays responsive while it copies, and
+      Quick Look and Show in Finder work on it. A file added to the event's folder in Finder shows up.
+- [ ] Repeating events: change one, then "this and all future ones"; delete one occurrence. Events keep their
+      time across a daylight-saving change, and an event in another time zone shows at the right local time.
+- [ ] Quick Capture: "physics quiz thursday 10am" shows the event line; ⌥↩ adds it, ⌥⌘↩ adds and opens it, and
+      ↩ still saves a note. A note that mentions a date stays a note.
+- [ ] A sealed space's event (a Red Cross shift) shows on the calendar, Today, the menu bar and in its
+      notification by title, time, location and file count; its notes, file names and linked notes show only
+      inside Red Cross. "New Note for This Event" makes the note in the subject's home.
+- [ ] The menu bar extra: today and the next event, Open Files, Capture, the Inbox count; turning it off in
+      Settings.
+- [ ] Settings › Subjects: deleting a subject homed in Red Cross that has events says why it can't be deleted
+      yet; one without events, or homed in an open space, is deleted and its events stay. "red cross: debrief
+      sat 9pm" in Quick Capture shows the Red Cross subject, and ⌥↩ makes the event there.
+
+## 6. Only a real Mac can tell
 
 These are open questions from the brief. Version 0.1 has a diagnostics report (Settings → Files) that checks
 them and can be copied.

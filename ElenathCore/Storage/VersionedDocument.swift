@@ -1,7 +1,8 @@
 import Foundation
 
-/// A small JSON file Elenath owns: library.json or space.json. Both are saved by `DocumentStore`, with a
-/// schema version, backups, a safety copy and recovery (docs/FORMAT.md, "Saving, backups and recovery").
+/// A JSON file Elenath owns: library.json, space.json, or the calendar's events.json. Each is saved by
+/// `DocumentStore`, with a schema version, backups, a safety copy and recovery (docs/FORMAT.md, "Saving,
+/// backups and recovery").
 public protocol VersionedDocument: Codable, Hashable, Sendable {
     /// "library.json"
     static var fileName: String { get }
@@ -16,6 +17,13 @@ public protocol VersionedDocument: Codable, Hashable, Sendable {
     static var migrator: SchemaMigrator { get }
     /// The document's identity, which names its safety copy.
     var documentID: UUID { get }
+    /// The largest file of this kind Elenath reads: a bigger one counts as damaged.
+    static var maximumByteCount: Int { get }
+}
+
+extension VersionedDocument {
+    /// Elenath's own settings files are a few kilobytes.
+    public static var maximumByteCount: Int { DocumentCodec.maximumByteCount }
 }
 
 /// library.json: the library's identity, the order of its spaces, and the settings that travel with it.

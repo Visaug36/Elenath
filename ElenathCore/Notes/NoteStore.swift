@@ -161,10 +161,11 @@ public actor NoteStore {
 
     /// Makes a new note in `folder`, which is created if it isn't there (but never a space's folder or
     /// the library's: `notFound` when those are gone). The title is made safe as a name, and a title that
-    /// is taken gets a number, as in Finder.
+    /// is taken gets a number, as in Finder. With `event`, the note is for that occurrence ("Notes for this
+    /// lecture"; front matter `event`).
     public func create(
         title: String, in folder: ItemPath, container: Container, kind: NoteKind = .note, body: String = "",
-        created: Date? = nil
+        created: Date? = nil, event: EventLink? = nil
     ) async throws -> LoadedNote {
         let folderURL = try await writableFolderURL(folder, in: container)
         try await requireContainerFolder(container)
@@ -172,8 +173,11 @@ public actor NoteStore {
         let name = availableNoteName(for: NameSanitizer.sanitizedTitle(title) + ".md", in: folderURL)
         guard let path = folder.appending(name) else { throw NoteStoreError.notANote }
         let ref = NoteRef(container: container, path: path)
-        let text = NoteText(
+        var text = NoteText(
             newNoteWithID: makeID(), created: created ?? timeSource.now, timeZone: timeZone(), kind: kind, body: body)
+        if let event {
+            text.frontMatter?.event = event
+        }
         return try write(text, to: try await noteURL(ref), as: ref)
     }
 

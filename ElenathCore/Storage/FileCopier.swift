@@ -62,13 +62,24 @@ public enum FileCopier {
     /// How often `copy` reports progress while one item is being copied.
     static let progressIntervalMilliseconds = 200
 
+    /// What a copy is called.
+    public enum Naming: Sendable {
+        /// The source's name made visible (leading dots dropped), with a number when it's taken, as in
+        /// Finder: for files the user drops.
+        case free
+        /// Exactly the source's name, a hidden one included; a copy never replaces what is there, so a
+        /// name that is taken fails with `fileWriteFileExists`. For bringing in a folder as it was.
+        case exact
+    }
+
     private static let log = CoreLog(category: "FileCopier")
 
     /// Copies (never moves) `sources` into `folder`, one at a time, off the caller's thread, and returns
     /// the copies' URLs in the order of `sources`.
     ///
-    /// A name that is taken gets a number, as in Finder. On failure or cancellation the temporary item is
-    /// removed, items already in place are kept, and the error (or `CancellationError`) is thrown.
+    /// A name that is taken gets a number, as in Finder (`naming: .exact` keeps the name and fails instead).
+    /// On failure or cancellation the temporary item is removed, items already in place are kept, and the
+    /// error (or `CancellationError`) is thrown.
     ///
     /// `FileManager.copyItem` clones on APFS, so copies on the same volume are instant. `progress` is
     /// called on a background thread: when each item starts, about every 0.2 s while one copies, and once
@@ -81,6 +92,7 @@ public enum FileCopier {
         into folder: URL,
         root: URL,
         fileSystem: any FileSystem,
+        naming: Naming = .free,
         progress: @escaping @Sendable (FileCopyProgress) -> Void = { _ in }
     ) async throws -> [URL] {
         let folder = folder.standardizedFileURL
@@ -98,8 +110,8 @@ public enum FileCopier {
             state.currentName = source.lastPathComponent
             progress(state)
             let destination = try await copyOne(
-                source, byteCount: sizes[index], into: folder, root: root, fileSystem: fileSystem, base: state,
-                report: progress)
+                source, byteCount: sizes[index], into: folder, root: root, fileSystem: fileSystem, naming: naming,
+                base: state, report: progress)
             copied.append(destination)
             state.completedBytes += sizes[index]
             state.completedFiles += 1
@@ -167,6 +179,7 @@ public enum FileCopier {
         into folder: URL,
         root: URL,
         fileSystem: any FileSystem,
+        naming: Naming,
         base: FileCopyProgress,
         report: @Sendable (FileCopyProgress) -> Void
     ) async throws -> URL {
@@ -208,7 +221,12 @@ public enum FileCopier {
         do {
             try outcome?.get()
             try Task.checkCancellation()
-            return try moveIntoPlace(temporary, as: name, in: folder, root: root, fileSystem: fileSystem)
+            switch naming {
+            case .free:
+                return try moveIntoPlace(temporary, as: name, in: folder, root: root, fileSystem: fileSystem)
+            case .exact:
+                return try moveIntoPlace(temporary, asExactly: name, in: folder, root: root, fileSystem: fileSystem)
+            }
         } catch {
             try? fileSystem.removeItem(at: temporary)
             if !(error is CancellationError) {
@@ -254,6 +272,21 @@ public enum FileCopier {
             }
         }
         throw CocoaError(.fileWriteFileExists)
+    }
+
+    /// Renames the finished temporary item to exactly `name`, never over something that has that name
+    /// (compared as the file system compares names).
+    private static func moveIntoPlace(
+        _ temporary: URL, asExactly name: String, in folder: URL, root: URL, fileSystem: any FileSystem
+    ) throws -> URL {
+        let destination = folder.appending(component: name, directoryHint: .notDirectory)
+        guard PathContainment.isStrictlyInside(destination, folder: root) else { throw FileCopyError.outsideLibrary }
+        let taken = ((try? fileSystem.contentsOfDirectory(at: folder)) ?? []).contains {
+            NameSanitizer.key($0.lastPathComponent) == NameSanitizer.key(name)
+        }
+        guard !taken else { throw CocoaError(.fileWriteFileExists) }
+        try fileSystem.moveItem(at: temporary, to: destination)
+        return destination
     }
 
     /// Whether `name` can be a file name in a folder: one path component, not "." or "..".

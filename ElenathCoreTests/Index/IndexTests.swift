@@ -264,6 +264,28 @@ struct IndexTests {
         #expect(try await retrieval.titles(matching: "thought", from: .inbox, limit: 10).map(\.title) == ["Thought"])
     }
 
+    @Test("Notes for an event occurrence are found by its link, however the id is written")
+    func notesForAnEvent() async throws {
+        let fixture = try await LibraryFixture()
+        defer { fixture.remove() }
+        _ = try await fixture.space("Uni")
+        let lecture = UUID(uuidString: "4954484C-DE30-4000-8000-000000000201")!
+        try fixture.write(
+            "---\nevent: \(lecture.uuidString.lowercased())/2026-10-06\n---\nWhat the lecture said.\n",
+            to: "Uni/Physics/Lecture 7.md")
+        try fixture.write("---\nevent: \(lecture.uuidString)/2026-10-13\n---\nThe next one.\n", to: "Uni/Lecture 8.md")
+        try fixture.write("---\nevent: not-an-event\n---\nNothing.\n", to: "Uni/Other.md")
+        let indexer = fixture.indexer()
+        await indexer.refreshAll()
+        let retrieval = fixture.retrieval()
+        let link = EventLink(eventID: lecture, day: "2026-10-06")
+        #expect(try await retrieval.notes(linkedTo: link, from: .everywhere).map(\.title) == ["Lecture 7"])
+        #expect(link.occurrenceID == Occurrence.ID(eventID: lecture, date: CalendarDate(year: 2026, month: 10, day: 6)))
+        #expect(
+            try await retrieval.notes(linkedTo: EventLink(eventID: lecture, day: "2026-10-20"), from: .everywhere)
+                .isEmpty)
+    }
+
     @Test("Tags, with nesting, and the notes that have them")
     func tags() async throws {
         let library = try await Library()

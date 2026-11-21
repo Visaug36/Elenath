@@ -103,6 +103,9 @@ struct LibraryCatalogTests {
         await #expect(throws: LibraryCatalogError.reservedName("Inbox")) {
             try await catalog.createSpace(named: "Inbox")
         }
+        await #expect(throws: LibraryCatalogError.reservedName("Calendar")) {
+            try await catalog.createSpace(named: "Calendar")
+        }
         await #expect(throws: LibraryCatalogError.reservedName("Sketches.board")) {
             try await catalog.createSpace(named: "Sketches.board")
         }
@@ -252,6 +255,9 @@ struct LibraryCatalogTests {
         }
         await #expect(throws: LibraryCatalogError.reservedName("Inbox")) {
             try await catalog.renameSpace(uni.id, to: "Inbox")
+        }
+        await #expect(throws: LibraryCatalogError.reservedName("calendar")) {
+            try await catalog.renameSpace(uni.id, to: "calendar")
         }
         // Only the letter case changes: the same folder, not a clash.
         #expect(try await catalog.renameSpace(uni.id, to: "UNIVERSITY").name == "UNIVERSITY")

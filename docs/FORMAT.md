@@ -4,8 +4,9 @@ This is the contract for what Elenath keeps on disk. The library is a folder of 
 the truth: any app that follows this document can read it, and Elenath shows whatever is in it, including
 changes made in Finder or another editor.
 
-Format version **1**. It covers what Elenath 0.1 reads and writes. Boards, charts and Nano bot's files are
-reserved here and specified when they ship.
+Format version **1**. It covers what Elenath 0.1 and 0.2 read and write; 0.2 adds the `Calendar` folder,
+which is Ithil's format, unchanged. Boards, charts and Nano bot's files are reserved here and specified when
+they ship.
 
 ## Principles
 
@@ -39,12 +40,19 @@ Elenath/                              the library: one folder, chosen on first l
 │       ├── Lecture 7 notes.md
 │       ├── Attachments/              files dropped on notes in this folder
 │       └── Free body diagrams.board/ reserved for boards
-└── Red Cross/                        another space
+├── Red Cross/                        another space
+└── Calendar/                         the calendar, in Ithil's format (see "The calendar")
+    ├── .ithil/
+    │   ├── events.json               subjects and events
+    │   └── backups/
+    └── 2026-11-16/
+        └── 14.00 Physics Lecture/    one folder per event occurrence, made when the first file arrives
+            └── .ithil-event          marker with the event's id and date
 ```
 
 - A folder is an Elenath library when it contains `.elenath`.
-- **Spaces** are the visible folders directly inside the library, except `Inbox`. Their names are the folder
-  names.
+- **Spaces** are the visible folders directly inside the library, except `Inbox` and `Calendar`. Their names
+  are the folder names.
 - The **Inbox** is the folder named `Inbox`. It belongs to no space. Its name on disk is always `Inbox`,
   whatever language Elenath runs in.
 - Files directly inside the library folder belong to no space. Elenath leaves them alone and doesn't show them.
@@ -56,6 +64,7 @@ Elenath/                              the library: one folder, chosen on first l
 |---|---|---|
 | `.elenath` | library folder | Elenath's own files for the library |
 | `Inbox` | library folder | the Inbox; never a space |
+| `Calendar` | library folder | the calendar; never a space |
 | `.space` | a space's folder | Elenath's own files for the space |
 | `Attachments` | any folder | files that belong to the notes beside it; not shown as a folder of notes |
 | `*.board` | any folder | a board package (reserved) |
@@ -105,7 +114,28 @@ to map them.
 | `savedAt` | ISO 8601, UTC, whole seconds | when the file was written |
 | `id` | UUID | the library's identity; never changes |
 | `spaces` | array of UUID | the order of the spaces in the sidebar, by their `space.json` ids. Spaces missing from the list come last, by name. Ids with no folder are kept. |
-| `settings` | object | settings that travel with the library. Empty in version 1. Unknown keys are kept. |
+| `settings` | object | settings that travel with the library. Unknown keys are kept. |
+
+`settings.calendar` (from 0.2) holds Elenath's own calendar settings, so that events.json stays Ithil's:
+
+```json
+"settings" : {
+  "calendar" : {
+    "homes" : {
+      "8E2F…" : { "folder" : "Physics", "space" : "0E6C3E2F-6F0B-4C55-9A1E-1D6A2B7C8D90" }
+    },
+    "id" : "4954484C-…"
+  }
+}
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `calendar.id` | UUID | the calendar's own id (events.json's `id`), so its safety copy can be found when the `Calendar` folder is gone |
+| `calendar.homes` | object | each subject's home, by the subject's id in events.json: the `space` (a space.json id) and the `folder` in it (a path; `""` for the top of the space). Notes for its events go there, its events' files belong to that space, and its events are sealed when that space is. A subject without an entry has no home: its events are never sealed and their notes go to the Inbox. An entry that can't be read (an empty object `{}` is written for one on purpose), two entries for one subject (keys that differ only in letter case), or an entry whose space is gone fails closed: the events' notes and files are shown nowhere until the subject gets a home again. |
+| `calendar.foundUnreadable` | any | what Elenath found in place of `calendar` or `calendar.homes` when that wasn't an object, kept as it was. Every subject of the calendar then got an entry that can't be read, so nothing that may have been sealed opens by accident. |
+
+When `calendar` or `calendar.homes` isn't an object, every subject's home counts as unreadable until the calendar is next opened, and the value is written back unchanged until then.
 
 ## space.json
 
@@ -306,6 +336,24 @@ The list marker may be `-`, `*`, `+` or a number, at any indent. Ticking a task 
 When a note changes on disk while Elenath holds unsaved edits to it, both are kept. The file on disk stays as
 it is, and the unsaved edits are saved beside it as `Title (conflict 2026-11-10 14.30).md` (local time; a
 number is added if that name is taken). Elenath never picks one silently.
+
+## The calendar
+
+The `Calendar` folder is an Ithil 1.0.0 folder, kept exactly in Ithil's format so it stays one: Ithil can
+open it, and everything in it is plain JSON and plain folders.
+
+- `.ithil/events.json` holds the subjects and events (Ithil's schema version 1): `id`, `subjects` (`id`,
+  `name`, `color` as a palette name or `#RRGGBB`, `keywords`) and `events` (`id`, `title`, `timing`,
+  `subjectID`, `location`, `notes`, `alert`, `recurrence`, `excludedDates`, `detachedFrom`, `createdAt`,
+  `modifiedAt`). It is saved like library.json: atomically, with rolling backups in `.ithil/backups/`
+  (`events-yyyyMMdd-HHmmss.json`), a damaged file set aside as `events.corrupt-yyyyMMdd-HHmmss.json`, and a
+  safety copy in Elenath's container.
+- **Event folders:** `<yyyy-MM-dd>/<HH.mm> <Title>/` for a timed event (the day and time in the event's own
+  time zone), `<yyyy-MM-dd>/<Title>/` for an all-day one, each with a hidden `.ithil-event` marker (the
+  event's id and the occurrence's date), so a folder renamed or moved in Finder is still found. A folder is
+  made only when the first file arrives. Files are copied in, never moved; deleting moves to the Trash.
+- Elenath's own settings for the calendar (each subject's home) are in library.json, never in events.json.
+- Elenath's notifications are its own (identifiers start `elenath.alert.`); it never touches an Ithil app's.
 
 ## Reserved for later versions
 

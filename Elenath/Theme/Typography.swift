@@ -9,6 +9,13 @@ enum Typography {
     static var detailTitle: Font { .system(size: 22, weight: .semibold, design: .serif) }
     static var emptyHeadline: Font { .system(size: 20, weight: .semibold, design: .serif) }
     static var sidebarTitle: Font { .system(size: 18, weight: .semibold, design: .serif) }
+    /// The calendar's (Ithil's): the month in the toolbar, a day's header, the mini month's month, and the
+    /// text of an event block.
+    static var monthTitle: Font { .system(size: 26, weight: .semibold, design: .serif) }
+    static var dayHeader: Font { .system(size: 20, weight: .semibold, design: .serif) }
+    static var sidebarMonth: Font { .system(size: 18, weight: .semibold, design: .serif) }
+    static var eventTitle: Font { .system(size: 12, weight: .semibold) }
+    static var eventTime: Font { .system(size: 11) }
 
     static var body: Font { .system(size: 13) }
     static var secondary: Font { .system(size: 12.5) }

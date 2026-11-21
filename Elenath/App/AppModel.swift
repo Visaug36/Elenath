@@ -22,6 +22,8 @@ enum LibraryState: Equatable {
 enum Route: Hashable {
     case today
     case inbox
+    /// The calendar (`CalendarModel`), from 0.2.
+    case calendar
     /// A space (the root path) or a folder inside a space or the Inbox.
     case folder(Container, ItemPath)
     /// The notes with a tag, as seen from a workplace.
@@ -56,7 +58,15 @@ final class AppModel {
     // MARK: - Library
 
     private(set) var state: LibraryState = .loading
-    private(set) var spaces: [Space] = []
+    private(set) var spaces: [Space] = [] {
+        didSet {
+            if spaces != oldValue {
+                calendar.libraryChanged(spaces: spaces, calendarSettings: calendar.calendarSettings)
+            }
+        }
+    }
+    /// The calendar, which moved in from Ithil. It opens and closes with the library.
+    let calendar: CalendarModel
     /// The library was written by a newer Elenath: shown, never changed.
     private(set) var isReadOnly = false
     /// The library folder, while `.ready`.
@@ -76,7 +86,9 @@ final class AppModel {
     /// How the saved folder's bookmark resolved at launch, for the diagnostics report.
     private(set) var bookmarkStatus: String = "not used"
     /// While the library is being moved to another folder, nothing may change.
-    var isMovingLibrary = false
+    var isMovingLibrary = false {
+        didSet { calendar.isMovingLibrary = isMovingLibrary }
+    }
 
     // MARK: - Navigation
 
@@ -147,6 +159,8 @@ final class AppModel {
     /// Bumped whenever a library opens; work started for an earlier library is dropped.
     @ObservationIgnored private var librarySession = 0
     @ObservationIgnored private var sidebarGeneration = 0
+    /// The workplace the sidebar's tags and sealed folders were last read for.
+    @ObservationIgnored private var sidebarWorkplace: Workplace = .everywhere
     @ObservationIgnored private var savedFolder: SavedFolder?
     /// The folder of the last open attempt, for "Start a New Library Here".
     @ObservationIgnored private var attemptedRoot: URL?
@@ -171,6 +185,7 @@ final class AppModel {
         self.settings = settings
         self.defaults = defaults
         support = .standard
+        calendar = CalendarModel(options: options, settings: settings, defaults: defaults)
     }
 
     /// Opens the library: the demo folder, the saved folder, or `.needsFolder`. Call once at launch;
@@ -178,6 +193,7 @@ final class AppModel {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        connectCalendar()
         if isDemo, showsOnboardingScene {
             state = .needsFolder
         } else if isDemo {
@@ -221,6 +237,7 @@ final class AppModel {
         switch route {
         case .today: .everywhere
         case .inbox: .inbox
+        case .calendar: calendar.workplace
         case .folder(let container, _): Reach.workplace(of: container)
         case .tag(_, let workplace): workplace
         case .note(let note): Reach.workplace(of: note.container)
@@ -234,7 +251,7 @@ final class AppModel {
         switch route {
         case .folder(let container, let folder): (container, folder)
         case .note(let note): (note.container, note.path.folder)
-        case .today, .inbox, .tag, .search: (.inbox, .root)
+        case .today, .inbox, .calendar, .tag, .search: (.inbox, .root)
         }
     }
 
@@ -293,7 +310,6 @@ final class AppModel {
     }
 
     private func setRoute(_ destination: Route) {
-        let previousWorkplace = workplace
         route = destination
         if case .note(let note) = destination {
             if session?.ref != note {
@@ -309,7 +325,13 @@ final class AppModel {
             // Leaving the results by other means than opening one ends the search.
             searchText = ""
         }
-        if workplace != previousWorkplace {
+        workplaceMayHaveChanged()
+    }
+
+    /// The sidebar's tags and folders follow the workplace: after a new route, and when the calendar starts
+    /// working inside a space or everywhere again (its workplace is the window's while it is shown).
+    func workplaceMayHaveChanged() {
+        if workplace != sidebarWorkplace {
             refreshSidebar()
         }
     }
@@ -409,6 +431,13 @@ final class AppModel {
         sidebarGeneration += 1
         let generation = sidebarGeneration
         let workplace = workplace
+        if workplace != sidebarWorkplace {
+            // What was read for another workplace may be a sealed space's: it goes at once, before the lists
+            // for this one arrive.
+            tags = []
+            folders = folders.filter { id, _ in self.space(id)?.isSealed != true }
+            sidebarWorkplace = workplace
+        }
         Task {
             let count = (try? await services.retrieval.inboxCount()) ?? 0
             var folders: [SpaceID: [ItemPath]] = [:]
@@ -509,6 +538,7 @@ final class AppModel {
                 }
             }
         }
+        calendarSnapshotChanged(snapshot)
         if let notice = LibraryMessages.recovery(
             snapshot.recoveries,
             sealedByDefault: snapshot.sealedByDefault.compactMap { id in snapshot.spaces.first { $0.id == id }?.name })
@@ -580,9 +610,11 @@ final class AppModel {
         recoveredEdits = []
         closeSession()
         services = nil
+        calendar.close()
         spaces = []
         folders = [:]
         tags = []
+        sidebarWorkplace = .everywhere
         inboxCount = 0
         rootURL = nil
         librarySession += 1
@@ -770,6 +802,8 @@ final class AppModel {
             rememberFolder(saved)
         }
         state = .ready
+        calendar.open(
+            libraryRoot: root, libraryID: snapshot.id, safetyDirectory: support.safetyCopies, snapshot: snapshot)
         startWatching(root)
         startIndexing()
         findRecoveredEdits()
@@ -907,6 +941,9 @@ final class AppModel {
         guard let services, state == .ready, stepsInFlight == 0 else { return }
         let change = pendingChange
         pendingChange = LibraryChange()
+        if change.reloadsCalendar {
+            calendar.reloadFromDisk()
+        }
         var containers = change.containers
         if change.reloadsCatalog {
             await reloadSpaces()

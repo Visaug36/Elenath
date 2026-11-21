@@ -62,6 +62,7 @@ enum LibraryMoveError: Error, LocalizedError {
     case stillSaving
     case folderChanged
     case importRunning
+    case filesCopying
     /// Something tried to write while the library moves.
     case moving
 
@@ -69,9 +70,11 @@ enum LibraryMoveError: Error, LocalizedError {
         switch self {
         case .moving: String(localized: "Elenath is moving your library. Try again in a moment; your text is kept.")
         case .notReady: String(localized: "The library can't be moved right now.")
-        case .stillSaving: String(localized: "A note is still being saved. Try again in a moment.")
+        case .stillSaving: String(localized: "Elenath is still saving your changes. Try again in a moment.")
         case .folderChanged: String(localized: "The folder changed while Elenath looked at it. Choose it again.")
         case .importRunning: String(localized: "Wait until the import has finished, then try again.")
+        case .filesCopying:
+            String(localized: "Files are still being copied into an event. Try again once they're done.")
         }
     }
 }
@@ -81,12 +84,14 @@ extension AppModel {
     /// Moves the library into the folder `chosen` stands for, and opens it there. The move goes back
     /// entirely if one item can't move.
     ///
-    /// Nothing writes into the library while it moves: the open note is closed and saved first, nothing
-    /// can be edited, captured or imported (`canEdit` is false), and the folder watcher is paused, so
-    /// files leaving don't look like changes to react to.
+    /// Nothing writes into the library while it moves: the open note is closed and saved first, the
+    /// calendar's saves and its event folders' work finish, nothing can be edited, captured or imported
+    /// (`canEdit` is false), and the folder watcher is paused, so files leaving don't look like changes to
+    /// react to. Not while files are being copied into an event.
     func moveLibrary(toChosen chosen: URL) async throws {
         guard !isDemo, canEdit, let oldRoot = rootURL else { throw LibraryMoveError.notReady }
         guard importTask == nil else { throw LibraryMoveError.importRunning }
+        guard calendar.isCopyingFiles?() != true else { throw LibraryMoveError.filesCopying }
         guard stepsInFlight == 0 else { throw LibraryMoveError.stillSaving }
         isMovingLibrary = true
         defer { isMovingLibrary = false }
@@ -94,7 +99,9 @@ extension AppModel {
             go(to: .today)
         }
         await finishPendingSaves(timeout: .seconds(10))
-        guard !hasPendingSaves else { throw LibraryMoveError.stillSaving }
+        await calendar.finishPendingSaves(timeout: .seconds(10))
+        let filesDone = await calendar.finishFileWork?(.seconds(10)) ?? true
+        guard !hasPendingSaves, !calendar.hasPendingSaves, filesDone else { throw LibraryMoveError.stillSaving }
         pauseWatching()
         let moving = Task.detached(priority: .userInitiated) { () throws -> URL in
             guard case .move(_, let newRoot) = LibraryFolderChoice.evaluate(chosen, currentRoot: oldRoot) else {

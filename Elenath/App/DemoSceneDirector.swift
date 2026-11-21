@@ -49,6 +49,22 @@ final class DemoSceneDirector {
             }
         case .capture:
             QuickCapturePanelController.shared.show(model: model, text: "uni: ask about the exam date")
+        case .week, .month:
+            model.calendar.span = screen == .week ? .week : .month
+            model.go(to: .calendar)
+        case .event, .sealedEvent:
+            model.calendar.span = .week
+            model.go(to: .calendar)
+            let title = screen == .event ? "Physics Lecture" : "Ambulance shift"
+            let week = model.calendar.visibleDays
+            let occurrence = model.calendar.occurrences(in: week).first { $0.event.title == title }
+            if let occurrence {
+                model.calendar.selectedOccurrenceID = occurrence.id
+                try? await Task.sleep(for: .milliseconds(500))
+                model.calendar.pendingDetailsOccurrenceID = occurrence.id
+            }
+        case .captureEvent:
+            QuickCapturePanelController.shared.show(model: model, text: "physics quiz thursday 10am")
         case .settings:
             // The screenshot takes the largest window, so the main window steps aside for Settings.
             let main = NSApp.windows.first { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
@@ -61,7 +77,7 @@ final class DemoSceneDirector {
     /// Waits up to 30 seconds for the demo library to open and be indexed.
     private func waitUntilReady() async -> Bool {
         for _ in 0..<120 {
-            if model.state == .ready, !model.isIndexing {
+            if model.state == .ready, !model.isIndexing, model.calendar.state == .ready {
                 try? await Task.sleep(for: .milliseconds(300))
                 return true
             }

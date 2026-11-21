@@ -75,9 +75,10 @@ public enum NameSanitizer {
     }
 
     /// Whether `name`, directly inside the library folder, is not a space: Elenath's own folder, the
-    /// Inbox, or anything hidden.
+    /// Inbox, the calendar, or anything hidden. (A space called "Calendar" made by Elenath 0.1 stays a space
+    /// until it is renamed: `LibraryCatalog` keeps it.)
     public static func isReservedAtLibraryRoot(_ name: String) -> Bool {
-        name.hasPrefix(".") || key(name) == key(inboxFolderName)
+        name.hasPrefix(".") || key(name) == key(inboxFolderName) || key(name) == key(calendarFolderName)
     }
 
     /// Whether `name`, inside a space or the Inbox, is not a folder of notes: Elenath's own folder, an
@@ -92,6 +93,9 @@ public enum NameSanitizer {
 
     /// The Inbox's folder, whatever language Elenath runs in.
     public static let inboxFolderName = "Inbox"
+
+    /// The calendar's folder, whatever language Elenath runs in.
+    public static let calendarFolderName = "Calendar"
 
     /// The folder beside a note that holds the files dropped on it.
     public static let attachmentsFolderName = "Attachments"

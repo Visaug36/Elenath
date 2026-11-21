@@ -9,11 +9,17 @@ public struct LibraryChange: Hashable, Sendable {
     public var containers: Set<Container> = []
     /// The notes that changed, so that one that is open can react.
     public var notes: Set<NoteRef> = []
+    /// The calendar's events.json may have changed, or its folder came, went or was renamed: the calendar
+    /// has to be read again (unless the change was Elenath's own save).
+    public var reloadsCalendar = false
+    /// Something changed in the calendar's event folders: a file came or went, or a folder was renamed or
+    /// moved in Finder. Event folders are looked up again and their file lists refreshed.
+    public var calendarFiles = false
 
     public init() {}
 
     public var isEmpty: Bool {
-        !reloadsCatalog && containers.isEmpty && notes.isEmpty
+        !reloadsCatalog && containers.isEmpty && notes.isEmpty && !reloadsCalendar && !calendarFiles
     }
 
     /// Adds what another batch found.
@@ -21,6 +27,8 @@ public struct LibraryChange: Hashable, Sendable {
         reloadsCatalog = reloadsCatalog || other.reloadsCatalog
         containers.formUnion(other.containers)
         notes.formUnion(other.notes)
+        reloadsCalendar = reloadsCalendar || other.reloadsCalendar
+        calendarFiles = calendarFiles || other.calendarFiles
     }
 }
 
@@ -58,6 +66,9 @@ public enum LibraryPathClassifier {
                 container = .inbox
             } else if let space = spacesByName[NameSanitizer.key(first)] {
                 container = .space(space)
+            } else if NameSanitizer.key(first) == NameSanitizer.key(NameSanitizer.calendarFolderName) {
+                classifyCalendar(Array(parts.dropFirst()), into: &change)
+                continue
             } else {
                 // A folder Elenath doesn't know yet, or a file beside the spaces. A file there is nothing
                 // to Elenath, but only the catalog can tell the two apart.
@@ -91,5 +102,27 @@ public enum LibraryPathClassifier {
             }
         }
         return change
+    }
+
+    /// A path inside the calendar's folder (a space from Elenath 0.1 called "Calendar" was matched as a
+    /// space before this).
+    private static func classifyCalendar(_ rest: [String], into change: inout LibraryChange) {
+        guard let first = rest.first else {
+            // The calendar's folder itself came, went or was renamed.
+            change.reloadsCalendar = true
+            change.calendarFiles = true
+            return
+        }
+        if first == LibraryLayout.calendarMetadataFolderName {
+            // Only events.json matters; backups, damaged copies set aside and half-written files don't.
+            if rest.count == 2, rest[1] == CalendarDocument.fileName {
+                change.reloadsCalendar = true
+            }
+            return
+        }
+        if rest.last == ".DS_Store" {
+            return
+        }
+        change.calendarFiles = true
     }
 }

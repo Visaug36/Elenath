@@ -199,6 +199,72 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **The review for 0.2.0 (2026-11-21).** Two independent reviewers (files and untrusted input; sealing,
+  privacy and the repository) found 15 problems; the usage limit stopped them once, and they were resumed.
+  Each is fixed, with a test that fails without the fix (checked by undoing each fix in a scratch copy), or
+  a crash-check step. The rules that came out of it:
+  - **Bring In** copies hidden files under their own names and counts them (`FileCopier.Naming.exact`);
+    only markers, `.DS_Store`, AppleDouble and icon files and unfinished copies stay behind. A folder Ithil
+    never marked gets the marker of the one occurrence whose folder it is. `run` returns Ithil's calendar
+    (`source`), and the app merges only that into the calendar as it is when the copy ends. `.ithil` and
+    `backups` must be real folders (read-only opening too); copies are rooted at the Calendar folder.
+  - **The expander** looks back at most 366 days and keeps the latest 32 occurrences of a series that last
+    into a range: one event lasting centuries had expanded its whole series (739,942 occurrences a week).
+  - **Fail closed:** a `calendar` or `homes` that isn't an object makes every subject's home unreadable;
+    the calendar settles it when it opens (an unreadable `{}` entry per subject, the value kept under
+    `foundUnreadable`). Two entries for one subject are unreadable. Calendar settings are backed up at once
+    when they change.
+  - **Deleting a subject** whose events would come out of a seal (sealed, gone or unreadable home) is
+    refused with an explanation, instead of keeping per-event homes in library.json (a new format key that
+    could itself be damaged). The editor doesn't change the subject of an event whose notes it hides.
+  - **The sidebar** remembers the workplace its tags and folders were read for and clears sealed ones at
+    once when the calendar's workplace changes (the calendar tells the window).
+  - **Quick Capture's event** reads the first line after a space prefix, at most 300 characters
+    (`CaptureEvent`), takes a subject homed in that space, and is refused for a sealed space without one.
+  - **A newer events.json** arriving while open makes the calendar read-only; recovery is shown on reload.
+  - **Moving the library** refuses while files copy into events and waits for the calendar's saves and its
+    folders' disk work. Not covered by an automated test: the demo can't move its library. It is on the
+    user's checklist with the rest of the move.
+  - **check-rules:** rule 4 and 4b match a query by name and first argument label (each overload needs its
+    own leak test); rule 5 also covers location, notes, keywords and `describing`.
+- **Phase 4 as built: the calendar (2026-11-19).** Ithil 1.0.0 moved in, ported, not rewritten: IthilCore and
+  its tests into `ElenathCore/Calendar` (Ithil's `LibraryCodecTests` too, with a byte-for-byte golden file of
+  events.json), Ithil's app layer into `Elenath/Calendar` (its `AppModel` is `CalendarModel`). The rules that
+  came out of it:
+  - **The calendar is `<library>/Calendar`, in Ithil's format**, with Ithil's backups and Elenath's safety copy
+    beside the spaces'. `Calendar` is reserved like `Inbox`; a space called "Calendar" from 0.1 stays a space
+    and the calendar asks for a rename. A link or file called Calendar is never used. events.json may be
+    128 MB (settings files keep 8 MB); markers are read up to 64 KB. The library move takes the calendar along.
+  - **Subject homes** are in library.json (`settings.calendar`), with the calendar's id. A home that can't be
+    read or whose space is gone **fails closed**: the events' content is read from nowhere until the subject
+    gets a home again (the brief's "counts as no home" would have opened a deleted sealed space's events).
+  - **`CalendarReach` is the calendar's one decision point** beside `Reach`: title, time, location and file
+    count everywhere; notes, file names and linked notes only where the home's content may be read. The
+    calendar works "everywhere" or inside one space ("Open in Red Cross", a capsule in the toolbar to leave).
+    The leak tests cover both halves, and check-rules rule 4b requires every `CalendarReach` query in them.
+  - **Notes for an occurrence** use front matter `event`; the index keeps it (schema 3) and
+    `Retrieval.notes(linkedTo:from:)` finds them through `Reach`. Notes for events without a home go to the
+    Inbox, and like every Inbox item they aren't shown elsewhere.
+  - **Bring in my Ithil calendar** reads the Ithil folder only, merges by id (a subject of the same name is
+    reused), copies event folders file by file without overwriting (markers written anew, hidden files left),
+    checks every file, and takes the merge in as one undo step. Running it again brings in nothing twice.
+  - **Event files join the main search in 0.3** with their text (phase 5); in 0.2 they are found from the
+    calendar, and the leak tests check they never reach the index.
+  - **Shortcuts** as agreed: ⌘1/2/3 Day/Week/Month, ⌘T, ⌘←/→, ⌘N (event in the calendar), ⌥⌘I Inbox; Quick
+    Capture ⌥Space by default (a recorded shortcut stays). Settings has Calendar and Subjects tabs; the menu
+    bar extra is `star.fill` with Capture and the Inbox; onboarding adds notifications and Ithil pages; an
+    empty calendar offers to bring Ithil's in.
+  - **Undo, corrected:** phase 3's "a group of its own when no group is open" didn't hold. With `groupsByEvent`
+    on, an explicit `beginUndoGrouping()` at level 0 also opens AppKit's event group, which closes only after
+    the next event, so changes made without one (Bring In after its copy, the crash check) all joined one
+    group; the crash check's log showed one Undo taking back three note steps, unnoticed since phase 3.
+    `UndoManager.registerAsOwnGroup` opens the group with `groupsByEvent` off; notes and the calendar use it
+    on the same window undo manager. The crash check now names every Undo and Redo it expects and checks
+    what each puts back.
+  - **Small choices, shown to the user:** Ithil's Up next is on Today and in the menu bar, not in the
+    calendar's sidebar (DESIGN.md); the app's back and forward stay beside the calendar's ‹ Today › in the
+    toolbar; the demo's "Halloween at the observatory" is a "Night at the observatory" away from 31 October,
+    since Elenath's demo week is in November.
 - **Phase 3 as built: the review (2026-11-16).** Two independent reviewers (one on files and untrusted input, one on links, SQLite, privacy, sealing and the repository) and the new crash check found the problems below; each is fixed with a test that fails without the fix. The rules that came out of it:
   - **Linear time for hostile text.** The Markdown scanner matches brackets and parentheses once per stretch, looks code spans up by run length and keeps CommonMark's openers bottom; `HostileInputTests.expectLinear` compares a sixteenth of the input with all of it (at most 40× the time). 300,000 random notes scanned the same before and after.
   - **Files that aren't what they seem.** `readData` refuses anything but a regular file (a named pipe blocks forever); listings, the index, attachments and imports skip pipes and links; a copied folder never holds a link; a chat's attachment names must be regular files right in the export; `.space`, `.elenath` and `backups` that are links are refused.
@@ -295,6 +361,14 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-21: **Phase 4 (the calendar) built, reviewed and green; 0.2.0 dated.** Ithil 1.0.0 is in: its
+  core and tests ported, its views fitted into Elenath's window, the calendar in `<library>/Calendar`,
+  Bring In, subject homes and the sealing exception. The release review (two independent reviewers) found
+  15 problems, all fixed (see "The review for 0.2.0"); the undo grouping from phase 3 was also corrected.
+  CI is green on macOS 26 and 27: 593 tests, the String Catalog, the arm64 Release archive, zero warnings,
+  and the crash check through every calendar step. Next: the PR, merge, the Release workflow publishing
+  0.2.0, then tell the user what to try (docs/RELEASE_CHECKLIST.md, section 5) and start phase 5 (meaning).
+- 2026-11-16: **0.1.1 published; phase 3 (the review) done.** The review was merged (https://github.com/Visaug36/Elenath/pull/3) and the Release workflow published https://github.com/Visaug36/Elenath/releases/tag/v0.1.1 as a prerelease, with `Elenath-0.1.1.zip` and its SHA-256: the reworked workflow (a read-only build job, then a small publish job that runs no project code) works, creating the tag itself as before. The user was given what only their Mac can test (docs/RELEASE_CHECKLIST.md, sections 4 and 5, and the diagnostics report). Next: phase 4, the calendar, with contracts in docs/ARCHITECTURE.md and screens in docs/DESIGN.md before code.
 - 2026-11-16: **Phase 3 (the review) built; CI green, the crash check included.** 277 core tests pass locally and on macOS 26 and 27, with the String Catalog, the Release archive and zero warnings, and the self-check walks through every step on the runner. The crash check found three more bugs on the way (the `[[` list blocking a run without a keyboard, overlapping undo steps, the title field renaming a note back), all fixed. A timing test that flaked once on macOS 27 now takes its best of three runs. Next: a PR, merge, and the Release workflow publishing 0.1.1; then tell the user what only they can test (docs/RELEASE_CHECKLIST.md, sections 4 and 5), and start phase 4 (the calendar).
 - 2026-11-15: **The user answered the plan's questions; phase 3 (review) started.**
 - 2026-11-15: **Change of plan: Ithil moves into Elenath.** CLAUDE.md rewritten for it. Ithil 1.0.0 was read again for the plan: about 5,000 lines of IthilCore, 326 tests and 16,000 lines of app code to port. The plan and questions were sent to the user; nothing is built until they say OK. A first finding for the review is already known: personal data in 3 merge commits on `main`.

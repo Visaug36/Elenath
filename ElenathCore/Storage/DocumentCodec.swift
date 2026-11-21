@@ -11,12 +11,13 @@ public enum DocumentCodec {
     /// The deepest nesting of arrays and objects a document may have. Elenath's own go a few levels deep;
     /// a file nested far deeper is damaged or hostile, and parsing it could run out of stack.
     public static let maximumDepth = 64
-    /// The largest document Elenath reads. Its own are a few kilobytes.
+    /// The largest settings document Elenath reads. Its own are a few kilobytes. (The calendar's events.json
+    /// has a limit of its own: `CalendarDocument.maximumByteCount`.)
     public static let maximumByteCount = 8 * 1024 * 1024
 
     /// Whether `data` is small enough and shallow enough to hand to a JSON parser: one pass over the
     /// bytes, counting brackets outside strings.
-    public static func isSafeToParse(_ data: Data) -> Bool {
+    public static func isSafeToParse(_ data: Data, maximumByteCount: Int = DocumentCodec.maximumByteCount) -> Bool {
         guard data.count <= maximumByteCount else { return false }
         var depth = 0
         var inString = false
@@ -74,7 +75,7 @@ public enum DocumentCodec {
     public static func decode<Document: VersionedDocument>(
         _ type: Document.Type, from data: Data, migrator: SchemaMigrator
     ) throws -> DecodedDocument<Document> {
-        guard isSafeToParse(data) else {
+        guard isSafeToParse(data, maximumByteCount: Document.maximumByteCount) else {
             throw DocumentStoreError.unreadable("Too large, or nested too deeply")
         }
         let parsed: Any
@@ -224,8 +225,9 @@ private struct DocumentReadEnvelope<Document: VersionedDocument>: Decodable {
 }
 
 extension Date {
-    /// This instant without its fraction of a second, the precision documents keep.
-    var roundedToSecond: Date {
+    /// This instant rounded to a whole second, the precision documents keep (events.json included), so
+    /// values that go through a save and load compare equal.
+    public var roundedToSecond: Date {
         Date(timeIntervalSince1970: timeIntervalSince1970.rounded())
     }
 }

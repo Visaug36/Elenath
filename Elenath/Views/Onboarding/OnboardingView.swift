@@ -1,14 +1,15 @@
 import ElenathCore
 import SwiftUI
 
-/// The first launch (docs/DESIGN.md, "Onboarding"): welcome, choose a folder, make the first spaces.
+/// The first launch (docs/DESIGN.md, "Onboarding"): welcome, choose a folder, make the first spaces, turn
+/// on notifications (explained before macOS asks), and bring in an Ithil calendar if there is one.
 ///
 /// Choosing a folder opens or creates the library, which takes `MainView` through `.loading` to
-/// `.ready`; it then shows this view again at the spaces page. Finishing that page marks onboarding as
+/// `.ready`; it then shows this view again at the spaces page. Finishing the last page marks onboarding as
 /// done.
 struct OnboardingView: View {
     enum Step: Int, CaseIterable {
-        case welcome, folder, spaces
+        case welcome, folder, spaces, notifications, calendar
     }
 
     @State private var step: Step
@@ -29,7 +30,13 @@ struct OnboardingView: View {
                     FolderPage()
                         .transition(transition)
                 case .spaces:
-                    FirstSpacesPage()
+                    FirstSpacesPage { go(to: .notifications) }
+                        .transition(transition)
+                case .notifications:
+                    NotificationsPage { go(to: .calendar) }
+                        .transition(transition)
+                case .calendar:
+                    YourCalendarPage()
                         .transition(transition)
                 }
             }
@@ -55,7 +62,7 @@ struct OnboardingView: View {
     }
 }
 
-/// Three 7 pt dots, the current one amber.
+/// Five 7 pt dots, the current one amber.
 private struct StepDots: View {
     let current: OnboardingView.Step
 
@@ -175,8 +182,8 @@ private struct FolderPage: View {
 
 /// The spaces to start with, each switched on or off, renamed, and sealed or not.
 private struct FirstSpacesPage: View {
+    let onContinue: () -> Void
     @Environment(AppModel.self) private var model
-    @Environment(AppSettings.self) private var settings
     @State private var rows: [Row] = Row.suggestions
     @State private var isCreating = false
 
@@ -266,7 +273,7 @@ private struct FirstSpacesPage: View {
 
     private func finish() {
         guard model.spaces.isEmpty else {
-            settings.hasCompletedOnboarding = true
+            onContinue()
             return
         }
         isCreating = true
@@ -278,7 +285,83 @@ private struct FirstSpacesPage: View {
         Task {
             await model.createFirstSpaces(chosen)
             isCreating = false
-            settings.hasCompletedOnboarding = true
+            onContinue()
+        }
+    }
+}
+
+/// "Stay on time": Ithil's notification card, explained before macOS asks (Ithil's `NotificationsStep`).
+private struct NotificationsPage: View {
+    let onContinue: () -> Void
+    @Environment(NotificationsController.self) private var notifications
+
+    var body: some View {
+        OnboardingPage(
+            title: Text("Stay on time"),
+            message: Text("Elenath reminds you before events, even when it is closed.")
+        ) {
+            NotificationPermissionView(onNotNow: { onContinue() })
+                .frame(maxWidth: 380)
+            if hasAnswer {
+                Button("Continue") {
+                    onContinue()
+                }
+                .buttonStyle(FolderSetupButtonStyle(isProminent: true))
+                .keyboardShortcut(.defaultAction)
+            } else {
+                Button("Skip") {
+                    onContinue()
+                }
+                .buttonStyle(.plain)
+                .font(Typography.body)
+                .foregroundStyle(Color.accentText)
+                .accessibilityHint(Text("Goes on without turning on notifications"))
+            }
+            Text("You can change this later in Settings.")
+                .font(Typography.footnote)
+                .foregroundStyle(Color.textTertiary)
+        }
+        .task {
+            await notifications.refreshAuthorization()
+        }
+    }
+
+    /// True once the user allowed or declined notifications.
+    private var hasAnswer: Bool {
+        switch notifications.authorization {
+        case .authorized, .denied: true
+        case .notDetermined, .unknown: false
+        }
+    }
+}
+
+/// "Bring in your calendar": an Ithil calendar comes across (`BringInIthilSheet`), or the calendar starts
+/// empty. Either way, onboarding is done.
+private struct YourCalendarPage: View {
+    @Environment(AppSettings.self) private var settings
+    @State private var showsBringIn = false
+
+    var body: some View {
+        OnboardingPage(
+            title: Text("Bring in your calendar"),
+            message: Text(
+                "Have you used Ithil? Elenath can copy your events, subjects and files. Your Ithil folder stays as it is."
+            )
+        ) {
+            Button("Bring In Ithil Calendar…") {
+                showsBringIn = true
+            }
+            .buttonStyle(FolderSetupButtonStyle(isProminent: true))
+            .keyboardShortcut(.defaultAction)
+            Button("Start With an Empty Calendar") {
+                settings.hasCompletedOnboarding = true
+            }
+            .buttonStyle(.plain)
+            .font(Typography.body)
+            .foregroundStyle(Color.accentText)
+        }
+        .sheet(isPresented: $showsBringIn, onDismiss: { settings.hasCompletedOnboarding = true }) {
+            BringInIthilSheet()
         }
     }
 }

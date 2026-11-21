@@ -1,8 +1,9 @@
 import ElenathCore
 import SwiftUI
 
-/// The sidebar: Today, the Inbox with its count, the spaces with their folders, and the tags that can be
-/// seen from where the user is. On the starry sidebar background.
+/// The sidebar: Today, the Inbox with its count, the Calendar (with Ithil's mini month and subjects under it
+/// while it is open), the spaces with their folders, and the tags that can be seen from where the user is.
+/// On the starry sidebar background, with the notification permission card at the bottom when it applies.
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     /// The spaces and folders whose folders are shown.
@@ -18,6 +19,15 @@ struct SidebarView: View {
                     model.go(to: .today)
                 }
                 InboxRow()
+                SidebarRow(
+                    title: Text("Calendar"), symbol: "calendar", tint: Color.textSecondary,
+                    isSelected: model.route == .calendar
+                ) {
+                    model.go(to: .calendar)
+                }
+                if model.route == .calendar {
+                    CalendarSidebarSections()
+                }
                 SidebarSectionLabel(title: Text("Spaces")) {
                     Button {
                         model.spaceSheet = .new
@@ -49,7 +59,10 @@ struct SidebarView: View {
         }
         .starryBackground(.backgroundSidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ImportStatusCard()
+            VStack(spacing: 0) {
+                SidebarNotificationPrompt()
+                ImportStatusCard()
+            }
         }
         .onChange(of: model.route, initial: true) {
             expandCurrentSpace()

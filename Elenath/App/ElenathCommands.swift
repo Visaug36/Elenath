@@ -2,8 +2,10 @@ import AppKit
 import ElenathCore
 import SwiftUI
 
-/// The menu bar: File › New Note ⌘N, New Folder ⇧⌘N, Quick Capture, Import… ⇧⌘I and Jump to Note… ⌘O;
-/// Edit › Find… ⌘F (the note's find bar) and Search Everywhere ⇧⌘F; View › Today ⌘1, Inbox ⌘2, Back ⌘[ and
+/// The menu bar: File › New Note ⌘N (New Event… ⌘N while the calendar is open), New Folder ⇧⌘N, Quick
+/// Capture, Import… ⇧⌘I and Jump to Note… ⌘O; Edit › Find… ⌘F (the note's find bar, or the search field) and
+/// Search Everywhere ⇧⌘F; View › Today ⌘T (today in the calendar while it is open), Inbox ⌥⌘I, Calendar,
+/// Day ⌘1, Week ⌘2 and Month ⌘3 (from anywhere), Previous and Next ⌘← ⌘→ in the calendar, Back ⌘[ and
 /// Forward ⌘]; and a Help menu that opens the project's GitHub pages in the browser (Elenath itself never
 /// goes online).
 struct ElenathCommands: Commands {
@@ -31,11 +33,23 @@ private struct FileCommands: View {
     let model: AppModel
 
     var body: some View {
-        Button("New Note") {
-            model.newNote()
+        if model.route == .calendar {
+            Button("New Event…") {
+                model.calendar.requestsNewEvent = true
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(!model.calendar.canEdit)
+            Button("New Note") {
+                model.newNote()
+            }
+            .disabled(!model.canEdit(model.currentPlace.container))
+        } else {
+            Button("New Note") {
+                model.newNote()
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(!model.canEdit(model.currentPlace.container))
         }
-        .keyboardShortcut("n", modifiers: .command)
-        .disabled(!model.canEdit(model.currentPlace.container))
         Button("New Folder") {
             let place = model.currentPlace
             model.newFolder(in: place.container, folder: place.folder)
@@ -71,6 +85,10 @@ private struct FindCommands: View {
         .keyboardShortcut("f", modifiers: .command)
         .disabled(model.state != .ready)
         Button("Search Everywhere") {
+            // The field searches events while the calendar is open: everywhere means the notes.
+            if model.route == .calendar {
+                model.go(to: .today)
+            }
             SearchFocus.focus()
         }
         .keyboardShortcut("f", modifiers: [.command, .shift])
@@ -102,13 +120,22 @@ private struct NavigationCommands: View {
     var body: some View {
         Group {
             Button("Today") {
-                model.go(to: .today)
+                if model.route == .calendar {
+                    model.calendar.goToToday()
+                } else {
+                    model.go(to: .today)
+                }
             }
-            .keyboardShortcut("1", modifiers: .command)
+            .keyboardShortcut("t", modifiers: .command)
             Button("Inbox") {
                 model.go(to: .inbox)
             }
-            .keyboardShortcut("2", modifiers: .command)
+            .keyboardShortcut("i", modifiers: [.command, .option])
+            Button("Calendar") {
+                model.go(to: .calendar)
+            }
+            Divider()
+            CalendarSpanCommands(model: model)
             Divider()
             Button("Back") {
                 model.goBack()
@@ -139,5 +166,80 @@ private struct HelpCommands: View {
         Button("Report an Issue…") {
             AppLinks.open(AppLinks.newIssue)
         }
+    }
+}
+
+/// Day ⌘1, Week ⌘2 and Month ⌘3 open the calendar from anywhere; Previous and Next (⌘← ⌘→) step it while it
+/// is open (Ithil's `CalendarNavigationCommands`).
+private struct CalendarSpanCommands: View {
+    let model: AppModel
+
+    var body: some View {
+        let calendar = model.calendar
+        Button("Day") {
+            show(.day)
+        }
+        .keyboardShortcut("1", modifiers: .command)
+        Button("Week") {
+            show(.week)
+        }
+        .keyboardShortcut("2", modifiers: .command)
+        Button("Month") {
+            show(.month)
+        }
+        .keyboardShortcut("3", modifiers: .command)
+        Button(previousTitle(calendar.span)) {
+            goBack()
+        }
+        .keyboardShortcut(.leftArrow, modifiers: .command)
+        .disabled(model.route != .calendar)
+        Button(nextTitle(calendar.span)) {
+            goForward()
+        }
+        .keyboardShortcut(.rightArrow, modifiers: .command)
+        .disabled(model.route != .calendar)
+    }
+
+    private func show(_ span: CalendarSpan) {
+        model.calendar.span = span
+        model.go(to: .calendar)
+    }
+
+    private func previousTitle(_ span: CalendarSpan) -> LocalizedStringKey {
+        switch span {
+        case .day: "Previous Day"
+        case .week: "Previous Week"
+        case .month: "Previous Month"
+        }
+    }
+
+    private func nextTitle(_ span: CalendarSpan) -> LocalizedStringKey {
+        switch span {
+        case .day: "Next Day"
+        case .week: "Next Week"
+        case .month: "Next Month"
+        }
+    }
+
+    /// ⌘← / ⌘→ belong to the text while typing (the search field, a note, the event editor): there they move
+    /// to the start or end of the line as usual, and only elsewhere step the calendar.
+    private func goBack() {
+        if let textView = editingTextView() {
+            textView.moveToLeftEndOfLine(nil)
+        } else {
+            model.calendar.step(-1)
+        }
+    }
+
+    private func goForward() {
+        if let textView = editingTextView() {
+            textView.moveToRightEndOfLine(nil)
+        } else {
+            model.calendar.step(1)
+        }
+    }
+
+    private func editingTextView() -> NSTextView? {
+        NSApplication.shared.keyWindow?.firstResponder as? NSTextView
     }
 }

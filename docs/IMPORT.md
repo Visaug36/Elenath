@@ -63,9 +63,28 @@ There are no steps per app. Two routes work for any of them:
 - **Many notes:** export them from the app as Markdown, plain text, Word or PDF, bring the files to the Mac, and
   drop them on the Inbox.
 
+### Your Ithil calendar
+
+Elenath does everything Ithil does, so your calendar moves in once and Ithil can go.
+
+1. In Elenath, open **Settings › Calendar** and click **Bring In Ithil Calendar…** (an empty calendar and the
+   first launch offer it too).
+2. Choose your Ithil folder. Ithil suggests `Documents/Ithil`. Elenath only reads it: nothing in it is
+   changed, moved or deleted.
+3. Elenath copies your subjects, your events and every event's files into the `Calendar` folder of your
+   library, checks that every file arrived, and shows the counts. Bringing it in again later brings in only
+   what's new, never anything twice.
+4. Elenath asks where each new subject belongs: the space its notes go to (change it later in **Settings ›
+   Subjects**). A subject homed in a sealed space keeps its events' notes and files sealed there; its
+   events still show on the calendar with everything else.
+5. Stop Ithil's own alerts, or every alert arrives twice: **System Settings › Notifications › Ithil**, turn
+   off **Allow Notifications**. Then quit Ithil and turn off its **Open at Login**.
+
+Your Ithil folder stays as it was. Keep it as an extra backup, or move it to the Trash once you're happy.
+
 ## Filing what you imported
 
-Everything dropped on the Inbox waits there until it is filed. In version 0.1 you file by hand: drag an item
-onto a space or folder in the sidebar, use the menu on an item in the Inbox (**File to…**), or the bar above an
-Inbox note. From version 0.2, Nano bot proposes a space, a folder, a title and tags for each item, and you
-accept, change or skip each proposal.
+Everything dropped on the Inbox waits there until it is filed. Until version 0.4 you file by hand: drag an
+item onto a space or folder in the sidebar, use the menu on an item in the Inbox (**File to…**), or the bar
+above an Inbox note. From version 0.4, Nano bot proposes a space, a folder, a title and tags for each item,
+and you accept, change or skip each proposal.

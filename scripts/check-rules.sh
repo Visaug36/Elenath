@@ -62,25 +62,56 @@ if [[ -n "$app" ]]; then
     check_entitlements "$app" <<< "$signed"
 fi
 
-# 4. Sealing: every query of Retrieval is asked from every workplace in the leak tests.
-retrieval=ElenathCore/Index/Retrieval.swift
+# 4. Sealing: every query of Retrieval is asked from every workplace in the leak tests. A query is its name
+# and its first argument label, so each overload (notes(in:), notes(tagged:), notes(linkedTo:)) needs its own.
 leak_tests=ElenathCoreTests/Index/SealingLeakTests.swift
-if [[ -f "$retrieval" ]]; then
-    queries=$(awk '/^public actor Retrieval/ { inside = 1 } inside' "$retrieval" \
-        | (grep -oE 'public func [A-Za-z]+' || true) | awk '{ print $3 }' | sort -u)
+leak_tests_flat=$(tr '\n' ' ' < "$leak_tests" 2> /dev/null || true)
+
+# Prints "name label" for each public func of the type that starts at $2 in file $1 ("_" for an unlabeled
+# first argument, nothing when there are no arguments).
+queries_of() {
+    awk -v start="$2" '$0 ~ start { inside = 1 } inside' "$1" | tr '\n' ' ' \
+        | (grep -oE 'public func [A-Za-z]+\([^:)]*' || true) \
+        | sed -E 's/public func ([A-Za-z]+)\([[:space:]]*([A-Za-z_]*).*/\1 \2/' | sort -u
+}
+
+# Fails unless every query of $2 (found by queries_of in $1 from $3) is called as `$4.query(label:` in the
+# leak tests.
+check_queries_asked() {
+    local file=$1 type=$2 start=$3 receiver=$4 queries name label pattern
+    queries=$(queries_of "$file" "$start")
     if [[ -z "$queries" ]]; then
-        fail "Found no queries in $retrieval. Has Retrieval moved?"
+        fail "Found no queries in $file. Has $type moved?"
+        return
     fi
-    for query in $queries; do
-        if ! grep -qE "retrieval\.${query}\(" "$leak_tests" 2> /dev/null; then
-            fail "Retrieval.${query} is not in $leak_tests. A query that isn't checked there may leak a sealed space."
+    while read -r name label; do
+        if [[ -z "$label" ]]; then
+            pattern="${receiver}\\.${name}\\([[:space:]]*\\)"
+        elif [[ "$label" == "_" ]]; then
+            pattern="${receiver}\\.${name}\\("
+        else
+            pattern="${receiver}\\.${name}\\([[:space:]]*${label}:"
         fi
-    done
+        if ! grep -qE "$pattern" <<< "$leak_tests_flat"; then
+            shown="${name}(${label:+$label:})"
+            fail "$type.$shown is not in $leak_tests. A query that isn't checked there may leak a sealed space."
+        fi
+    done <<< "$queries"
+}
+
+if [[ -f ElenathCore/Index/Retrieval.swift ]]; then
+    check_queries_asked ElenathCore/Index/Retrieval.swift Retrieval '^public actor Retrieval' retrieval
+fi
+
+# 4b. The calendar's sealing exception: every query of CalendarReach is asked in the leak tests too.
+if [[ -f ElenathCore/Calendar/Library/CalendarReach.swift ]]; then
+    check_queries_asked ElenathCore/Calendar/Library/CalendarReach.swift CalendarReach '^public struct CalendarReach' \
+        calendarReach
 fi
 
 # 5. Privacy in logs: what may name the user's notes or files is never public.
 leaks=$(grep -rnE --include='*.swift' \
-    '(localizedDescription|\.path|[Uu][Rr][Ll]|[Tt]itle|[Nn]ame|[Bb]ody|[Tt]ext|[Pp]rompt)[A-Za-z]*(\)[A-Za-z.]*)*, privacy: \.public' \
+    '(localizedDescription|describing|\.path|[Uu][Rr][Ll]|[Tt]itle|[Nn]ame|[Bb]ody|[Tt]ext|[Pp]rompt|[Ll]ocation|[Nn]otes|[Kk]eywords)[A-Za-z]*(\)[A-Za-z.]*)*, privacy: \.public' \
     Elenath ElenathCore || true)
 if [[ -n "$leaks" ]]; then
     fail "These log lines make a title, a text, a file name or a path readable:

@@ -54,12 +54,17 @@ final class QuickCapturePanelController {
         panel.onCommandReturn = { [weak self] in
             self?.submit(openingNote: true)
         }
+        panel.onAddEvent = { [weak self] opens in
+            self?.addEvent(opening: opens)
+        }
         let root = QuickCaptureView(
             session: session,
             onSubmit: { [weak self] in self?.submit(openingNote: false) },
-            onCancel: { [weak self] in self?.close() }
+            onCancel: { [weak self] in self?.close() },
+            onAddEvent: { [weak self] opens in self?.addEvent(opening: opens) }
         )
         .environment(model)
+        .environment(model.calendar)
         .environment(model.settings)
         let hostingView = NSHostingView(rootView: root)
         panel.makeFirstResponder(nil)
@@ -110,6 +115,41 @@ final class QuickCapturePanelController {
                 session.message = LibraryMessages.operationFailed(error)
                 NSSound.beep()
             }
+        }
+    }
+
+    /// ⌥↩ (or a click on the event line): adds the event the text describes to the calendar; ⌥⌘↩ also opens
+    /// it there, in its editor. A note stays the default: ↩ never makes an event.
+    private func addEvent(opening: Bool) {
+        guard let session, let model, !session.isSaving else { return }
+        let calendar = model.calendar
+        guard let draft = calendar.captureEvent(for: session.text) else {
+            NSSound.beep()
+            return
+        }
+        guard calendar.canEdit else {
+            session.message = String(localized: "Open your library in Elenath first. Your text is kept.")
+            NSSound.beep()
+            return
+        }
+        let event = calendar.makeEvent(from: draft)
+        calendar.add(event)
+        let files = session.attachments.compactMap { attachment -> URL? in
+            if case .file(let url) = attachment {
+                return url
+            }
+            return nil
+        }
+        let occurrence = calendar.occurrence(id: Occurrence.ID(eventID: event.id, date: event.timing.startDate))
+        if let occurrence, !files.isEmpty {
+            calendar.filesForNewEvent?(files, occurrence)
+        }
+        session.reset()
+        close()
+        if opening, let occurrence {
+            revealMainWindow()
+            calendar.reveal(occurrence)
+            calendar.pendingEditorOccurrenceID = occurrence.id
         }
     }
 
@@ -192,6 +232,8 @@ final class QuickCapturePanelController {
 final class QuickCapturePanel: NSPanel {
     var onCancel: (@MainActor () -> Void)?
     var onCommandReturn: (@MainActor () -> Void)?
+    /// ⌥⌘↩ (true): adds the event the text describes and opens it.
+    var onAddEvent: (@MainActor (Bool) -> Void)?
     var onResignKey: (@MainActor () -> Void)?
 
     override var canBecomeKey: Bool {
@@ -208,10 +250,15 @@ final class QuickCapturePanel: NSPanel {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-            event.keyCode == 36 || event.keyCode == 76, let onCommandReturn
-        {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let isReturn = event.keyCode == 36 || event.keyCode == 76
+        if event.type == .keyDown, isReturn, modifiers == .command, let onCommandReturn {
             onCommandReturn()
+            return true
+        }
+        // ⌥⌘↩: add the event the text describes, and open it in the calendar.
+        if event.type == .keyDown, isReturn, modifiers == [.command, .option], let onAddEvent {
+            onAddEvent(true)
             return true
         }
         return super.performKeyEquivalent(with: event)

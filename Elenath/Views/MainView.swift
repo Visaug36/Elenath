@@ -6,16 +6,18 @@ import SwiftUI
 ///
 /// Until onboarding is done (`AppSettings.hasCompletedOnboarding`), `.needsFolder` shows onboarding's
 /// welcome and folder pages, and `.ready` its first-spaces page; afterwards they show `ChooseFolderView`
-/// and the library. The window's undo manager becomes `AppModel.undoManager`, so Edit › Undo and Redo
-/// reach what was done to notes, folders and spaces.
+/// and the library. The window's undo manager becomes `AppModel.undoManager` and `CalendarModel.undoManager`,
+/// so Edit › Undo and Redo reach what was done to notes, folders, spaces and events.
 struct MainView: View {
     /// The main window's scene ID, for `openWindow(id:)`.
     static let windowID = "main"
 
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
+    @Environment(NotificationsController.self) private var notifications
     @Environment(\.undoManager) private var undoManager
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         content
@@ -24,11 +26,18 @@ struct MainView: View {
             .modifier(FolderErrorAlert())
             .modifier(OperationErrorAlert())
             .modifier(RecoveredEditsAlert())
+            .modifier(CalendarAlerts())
             .onAppear {
                 model.undoManager = undoManager
+                model.calendar.undoManager = undoManager
+                let openWindow = openWindow
+                notifications.openMainWindow = {
+                    openWindow(id: MainView.windowID)
+                }
             }
             .onChange(of: undoManager) { _, newValue in
                 model.undoManager = newValue
+                model.calendar.undoManager = newValue
             }
             .onChange(of: model.demoOpensSettings) { _, opens in
                 guard opens else { return }

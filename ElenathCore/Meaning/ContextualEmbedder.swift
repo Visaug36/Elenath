@@ -30,8 +30,14 @@
             else { return }
             requested.insert(script)
             let log = log
-            embedding.requestAssets { result, error in
-                if error != nil || result != .available {
+            // The download runs on its own, so no batch of indexing waits for it; until the model is there, the
+            // text is found by keyword search.
+            Task.detached(priority: .utility) {
+                guard let nlScript = ContextualEmbedder.nlScript(for: script),
+                    let fetcher = NLContextualEmbedding(script: nlScript)
+                else { return }
+                let result = try? await fetcher.requestAssets()
+                if result != .available {
                     log.notice("An embedding model isn't on this Mac yet; its text is found by keyword search")
                 }
             }

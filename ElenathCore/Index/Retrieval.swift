@@ -151,6 +151,25 @@ public actor Retrieval {
     private let spaces: @Sendable () async -> [Space]
     private var indexes: [Container: SpaceIndex] = [:]
     private var contexts: [Set<Container>: CachedContext] = [:]
+    private var embedder: (any Embedder)?
+    /// Each index's vectors of one model, with the index's chunk version they were read at.
+    private var vectors: [VectorKey: CachedVectors] = [:]
+
+    private struct VectorKey: Hashable {
+        var container: Container
+        var model: String
+    }
+
+    private struct CachedVectors {
+        var version: Int64
+        var vectors: [ChunkVector]
+    }
+
+    /// How close a chunk must be to count as about the same thing: the dot product of normalized vectors.
+    /// Measured with `RetrievalBenchmark` on the real embedder; nothing below it is shown.
+    public static let minimumSimilarity: Float = 0.35
+    /// Reciprocal rank fusion's constant: a hit's score is the sum of 1 / (k + rank) over the rankings.
+    static let fusionConstant = 60.0
 
     private struct CachedContext {
         var versions: [Container: Int64]
@@ -176,25 +195,7 @@ public actor Retrieval {
         var loose: [SearchHit] = []
         var files: [SearchHit] = []
         for index in try await readable(from: workplace) {
-            if let space = query.space, index.container != .space(space) {
-                continue
-            }
-            var filter = IndexFilter(
-                tag: query.tag, kind: query.kind, modifiedAfter: query.modifiedAfter,
-                modifiedBefore: query.modifiedBefore)
-            if let folder = query.folder, !folder.isRoot {
-                // A folder belongs to one space: the one named, or the one the user is in.
-                let owner: Container?
-                if let space = query.space {
-                    owner = .space(space)
-                } else if case .space(let id) = workplace {
-                    owner = .space(id)
-                } else {
-                    owner = workplace == .inbox ? .inbox : nil
-                }
-                guard index.container == owner else { continue }
-                filter.folder = folder
-            }
+            guard let filter = Retrieval.filter(for: query, in: index.container, from: workplace) else { continue }
             guard let match = terms.fullTextQuery else {
                 for row in try index.notes(filter: filter, limit: query.limit) {
                     let hit = Retrieval.hit(row, in: index.container)
@@ -247,6 +248,157 @@ public actor Retrieval {
         loose.sort { Retrieval.isNewer($0.modified, than: $1.modified) }
         files.sort { Retrieval.isNewer($0.modified, than: $1.modified) }
         return Array((ranked.map(\.hit) + loose + files).prefix(query.limit))
+    }
+
+    /// The filter `query` puts on one container's notes, or nil when the query leaves the container out: another
+    /// space than the one named, or a folder that belongs to another space.
+    private static func filter(
+        for query: SearchQuery, in container: Container, from workplace: Workplace
+    )
+        -> IndexFilter?
+    {
+        if let space = query.space, container != .space(space) {
+            return nil
+        }
+        var filter = IndexFilter(
+            tag: query.tag, kind: query.kind, modifiedAfter: query.modifiedAfter, modifiedBefore: query.modifiedBefore)
+        if let folder = query.folder, !folder.isRoot {
+            // A folder belongs to one space: the one named, or the one the user is in.
+            let owner: Container?
+            if let space = query.space {
+                owner = .space(space)
+            } else if case .space(let id) = workplace {
+                owner = .space(id)
+            } else {
+                owner = workplace == .inbox ? .inbox : nil
+            }
+            guard container == owner else { return nil }
+            filter.folder = folder
+        }
+        return filter
+    }
+
+    // MARK: - Meaning
+
+    /// The embedder whose vectors meaning search and related notes use; nil leaves them out.
+    public func setEmbedder(_ embedder: (any Embedder)?) {
+        self.embedder = embedder
+        vectors = [:]
+    }
+
+    /// `search(_:from:)`'s keyword ranking fused with a meaning ranking: the question's vector against every
+    /// chunk the workplace may read, best chunk per note, fused by reciprocal rank fusion. Keyword only for a
+    /// question of fewer than three characters or one no model reads, and without an embedder.
+    public func searchByMeaning(_ query: SearchQuery, from workplace: Workplace) async throws -> [SearchHit] {
+        let keyword = try await search(query, from: workplace)
+        let text = query.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 3, let embedder else { return keyword }
+        guard let model = embedder.model(for: text, among: await embedder.models()),
+            let vector = try await embedder.vectors(for: [text], with: model).first ?? nil
+        else { return keyword }
+        let words = SearchTerms(query.text).words
+        var scored: [(score: Float, hit: SearchHit)] = []
+        for index in try await readable(from: workplace) {
+            guard let filter = Retrieval.filter(for: query, in: index.container, from: workplace) else { continue }
+            let best = try bestChunks(in: index, model: model, near: vector, limit: query.limit, skipping: [])
+            let rows = try index.noteRows(ids: best.map(\.note), filter: filter)
+            for match in best {
+                guard let row = rows[match.note] else { continue }
+                let text = try index.chunkText(match.chunk.chunk)?.text ?? row.preview
+                scored.append(
+                    (
+                        match.score,
+                        SearchHit(
+                            item: .note(NoteRef(container: index.container, path: row.path)), title: row.title,
+                            snippet: Retrieval.snippet(of: text, around: words), matchedTerms: words,
+                            modified: row.modified)
+                    ))
+            }
+        }
+        scored.sort { $0.score > $1.score }
+        return Retrieval.fused(keyword, scored.map(\.hit), limit: query.limit)
+    }
+
+    /// Notes about the same things as `note`, best first: notes with chunks close to the note's own (the mean of
+    /// its chunks' vectors), leaving out the note and those it links to or that link to it. Only from containers
+    /// the workplace may read, and nothing for a note it may not.
+    public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [NoteHit] {
+        guard let embedder, limit > 0, await allows(note.container, from: workplace) else { return [] }
+        let readable = try await readable(from: workplace)
+        guard let home = readable.first(where: { $0.container == note.container }),
+            let rowID = try home.rowID(of: note.path)
+        else { return [] }
+        let linked = try home.linkedRows(around: rowID)
+        var best: [NoteRef: (score: Float, hit: NoteHit)] = [:]
+        for model in await embedder.models() {
+            let own = try cachedVectors(home, model: model).filter { $0.note == rowID }.map(\.vector)
+            guard let mean = VectorMath.mean(own).flatMap(VectorMath.normalized) else { continue }
+            for index in readable {
+                let skipping = index.container == note.container ? linked.union([rowID]) : []
+                let matches = try bestChunks(in: index, model: model, near: mean, limit: limit, skipping: skipping)
+                let rows = try index.noteRows(ids: matches.map(\.note), filter: IndexFilter())
+                for match in matches {
+                    guard let row = rows[match.note] else { continue }
+                    let hit = Retrieval.hit(row, in: index.container)
+                    if match.score > (best[hit.note]?.score ?? -1) {
+                        best[hit.note] = (match.score, hit)
+                    }
+                }
+            }
+        }
+        return best.values.sorted { $0.score > $1.score }.prefix(limit).map(\.hit)
+    }
+
+    /// The notes of an index with a chunk closest to `vector`, best chunk per note, at least
+    /// `minimumSimilarity`, at most `limit` of them.
+    private func bestChunks(
+        in index: SpaceIndex, model: EmbeddingModel, near vector: [Float], limit: Int, skipping: Set<Int64>
+    ) throws -> [(note: Int64, chunk: ChunkVector, score: Float)] {
+        var best: [Int64: (chunk: ChunkVector, score: Float)] = [:]
+        for chunk in try cachedVectors(index, model: model) {
+            guard let note = chunk.note, !skipping.contains(note) else { continue }
+            let score = VectorMath.dot(vector, chunk.vector)
+            if score >= Retrieval.minimumSimilarity, score > (best[note]?.score ?? -1) {
+                best[note] = (chunk, score)
+            }
+        }
+        return best.map { (note: $0.key, chunk: $0.value.chunk, score: $0.value.score) }
+            .sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+    }
+
+    /// An index's vectors of one model, read again only when its chunks changed.
+    private func cachedVectors(_ index: SpaceIndex, model: EmbeddingModel) throws -> [ChunkVector] {
+        let key = VectorKey(container: index.container, model: model.stamp.key)
+        let version = try index.chunksVersion()
+        if let cached = vectors[key], cached.version == version {
+            return cached.vectors
+        }
+        let read = try index.chunkVectors(model: model.stamp, dimension: model.dimension)
+        vectors[key] = CachedVectors(version: version, vectors: read)
+        return read
+    }
+
+    /// Reciprocal rank fusion of two rankings: a hit's score is the sum of 1 / (k + rank) over the lists it is
+    /// in. Equal scores keep the keyword order, then the meaning order; a hit in both keeps its keyword snippet.
+    static func fused(_ keyword: [SearchHit], _ meaning: [SearchHit], limit: Int) -> [SearchHit] {
+        var scores: [SearchHit.Item: Double] = [:]
+        var order: [SearchHit.Item] = []
+        var hits: [SearchHit.Item: SearchHit] = [:]
+        for list in [keyword, meaning] {
+            for (rank, hit) in list.enumerated() {
+                if hits[hit.item] == nil {
+                    hits[hit.item] = hit
+                    order.append(hit.item)
+                }
+                scores[hit.item, default: 0] += 1 / (fusionConstant + Double(rank + 1))
+            }
+        }
+        let position = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) })
+        return order.sorted { first, second in
+            let a = scores[first] ?? 0
+            let b = scores[second] ?? 0
+            return a != b ? a > b : (position[first] ?? 0) < (position[second] ?? 0)
+        }.prefix(limit).compactMap { hits[$0] }
     }
 
     /// Notes whose title contains `text`, those that start with it first: for "[[" and for jumping to a
@@ -588,6 +740,8 @@ public actor Retrieval {
             return index
         }
         indexes[container] = nil
+        // A new file starts its chunk versions over: what was read from the old one must not pass for current.
+        vectors = vectors.filter { $0.key.container != container }
         try FileManager.default.createDirectory(at: indexDirectory, withIntermediateDirectories: true, attributes: nil)
         let index = try SpaceIndex(url: url, container: container)
         indexes[container] = index

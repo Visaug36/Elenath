@@ -199,6 +199,11 @@ A Windows or phone version, sync between devices, a different local model (if Ap
 Keep this section current. Newest first.
 
 ### Decisions
+- **Check everything after phase 5 (user, 2026-11-25):** "once you finish this phase check for everythinggg,
+  security, functionability and everything". Before 0.3.0 is released, the review is wider than section R:
+  security and sealing, every feature against this brief (does it work as described), data safety,
+  performance against the quality bar, accessibility, the docs. Independent reviewers, each finding fixed
+  with a test.
 - **The review for 0.2.0 (2026-11-21).** Two independent reviewers (files and untrusted input; sealing,
   privacy and the repository) found 15 problems; the usage limit stopped them once, and they were resumed.
   Each is fixed, with a test that fails without the fix (checked by undoing each fix in a scratch copy), or
@@ -361,6 +366,16 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-25: **Phase 5 (meaning) in progress; stopped at the user's request** ("finish this little task
+  and stop"). Done on `claude/new-session-fplgmb` (598 core tests pass locally): the contract in
+  docs/ARCHITECTURE.md ("Meaning"), the chunker, the embedder layer (`Embedder`, models by script,
+  `ContextualEmbedder` behind `#if canImport(NaturalLanguage)`, `HashingEmbedder` in the tests), index
+  schema 4 with chunks, vectors and stamps and the background embedding pass, `Retrieval.searchByMeaning`
+  (reciprocal rank fusion) and `Retrieval.related(to:from:limit:)`, with the leak tests asking both (shown
+  to fail when `related` ignores seals). Not built yet: PDF, picture and event-file text (task 35), the
+  app layer with DESIGN.md first (36: fused search, Related under notes, indexing status and pause, the
+  diagnostics benchmark), then the full check the user asked for and 0.3.0 (37). The app layer hasn't been
+  compiled with these changes on CI beyond the push of the index schema.
 - 2026-11-21: **0.2.0 published; phase 4 (the calendar) done.** Merged (https://github.com/Visaug36/Elenath/pull/4)
   and published by the Release workflow as a prerelease (https://github.com/Visaug36/Elenath/releases/tag/v0.2.0,
   `Elenath-0.2.0.zip` with its SHA-256). The user was given what to try (docs/RELEASE_CHECKLIST.md, section 5).

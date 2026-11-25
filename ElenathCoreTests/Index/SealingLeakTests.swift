@@ -53,6 +53,10 @@ struct SealingLeakTests {
             indexer = fixture.indexer()
             retrieval = fixture.retrieval()
             await indexer.refreshAll()
+            // Vectors too: meaning search and related notes must keep the seals like every other query.
+            await indexer.setEmbedder(HashingEmbedder())
+            await retrieval.setEmbedder(HashingEmbedder())
+            await indexer.embedAll()
         }
 
         /// A calendar with an event homed in each space and one with no home. Each marker is in its
@@ -156,6 +160,11 @@ struct SealingLeakTests {
                 A link to [[\(marker) plan]] and to [[Shared title]].
                 """, to: "\(folder)/\(marker) drills/\(marker) roster.md")
             try fixture.write("The \(marker) plan itself.\n", to: "\(folder)/\(marker) plan.md")
+            // Says nearly what the roster says, so related notes and meaning search have something to find, and
+            // the same note in another container differs only by its marker.
+            try fixture.write(
+                "Notes on the \(marker) protocol: call the \(marker) team, text about the protocol.\n",
+                to: "\(folder)/\(marker) protocol notes.md")
             try fixture.write("Same title in every container, by \(marker).\n", to: "\(folder)/Shared title.md")
             try fixture.write("%PDF", to: "\(folder)/\(marker) drills/\(marker) scan.pdf")
         }
@@ -187,7 +196,9 @@ struct SealingLeakTests {
                     SearchQuery(text: text, tag: "\(SealingLeakTests.sealedMarker)-tag", limit: 200),
                     SearchQuery(text: text, kind: .idea, limit: 200),
                 ] {
-                    for hit in try await retrieval.search(query, from: workplace) {
+                    for hit in try await retrieval.search(query, from: workplace)
+                        + (try await retrieval.searchByMeaning(query, from: workplace))
+                    {
                         found += [hit.title, hit.snippet.text]
                         switch hit.item {
                         case .note(let note): found.append(note.path.description)
@@ -256,6 +267,9 @@ struct SealingLeakTests {
                     toMoved: [NoteMove(from: note, to: renamed)], from: workplace
                 ).map(\.path.description)
                 found += try await retrieval.attachmentNamesShared(by: note, from: workplace)
+                for hit in try await retrieval.related(to: note, from: workplace, limit: 50) {
+                    found += [hit.title, hit.preview, hit.note.path.description]
+                }
                 if let hit = try await retrieval.note(note, from: workplace) {
                     found += [hit.title, hit.preview]
                 }
@@ -477,8 +491,8 @@ struct SealingLeakTests {
         }
         #expect(!everything.joined(separator: " ").lowercased().contains(Self.sealedMarker))
 
-        // The Inbox's count is a number and nothing more.
-        #expect(try await library.retrieval.inboxCount() == 3)
+        // The Inbox's count is a number and nothing more: the four notes planted there.
+        #expect(try await library.retrieval.inboxCount() == 4)
     }
 
     // MARK: - Sealing and unsealing
@@ -606,6 +620,28 @@ struct SealingLeakTests {
         let gone = CalendarReach(
             workplace: .everywhere, spaces: await library.fixture.catalog.spaces(), settings: damaged)
         #expect(gone.deletingSubjectWouldUnseal(lectures.id, in: library.calendar))
+    }
+
+    @Test("Meaning search and related notes see a sealed space's notes from inside it, and only there")
+    func meaningStaysInside() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let sealed = Container.space(library.redCross.id)
+        let roster = library.roster(Self.sealedMarker, in: sealed)
+        let inside = try await library.retrieval.related(to: roster, from: .space(library.redCross.id), limit: 10)
+        #expect(inside.map(\.title).contains("\(Self.sealedMarker) protocol notes"))
+        for workplace: Workplace in [.everywhere, .space(library.uni.id), .space(library.ideas.id), .inbox] {
+            #expect(try await library.retrieval.related(to: roster, from: workplace, limit: 10).isEmpty)
+        }
+        // An open note's related notes never reach into the seal, though the sealed copy says nearly the same.
+        let open = library.roster(Self.openMarker, in: .space(library.uni.id))
+        let fromUni = try await library.retrieval.related(to: open, from: .space(library.uni.id), limit: 10)
+        #expect(fromUni.map(\.title).contains("\(Self.openMarker) protocol notes"))
+        #expect(!fromUni.contains { $0.title.contains(Self.sealedMarker) || $0.preview.contains(Self.sealedMarker) })
+        let query = SearchQuery(text: "protocol team notes", limit: 50)
+        let found = try await library.retrieval.searchByMeaning(query, from: .everywhere)
+        #expect(found.map(\.title).contains("\(Self.openMarker) protocol notes"))
+        #expect(!found.contains { $0.title.contains(Self.sealedMarker) || $0.snippet.text.contains(Self.sealedMarker) })
     }
 
     @Test("A space whose settings can't be read counts as sealed")

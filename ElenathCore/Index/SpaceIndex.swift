@@ -717,6 +717,44 @@ final class SpaceIndex {
         ) { SpaceIndex.noteRow($0) }
     }
 
+    /// The notes among `ids` that pass the filter, by row id.
+    func noteRows(ids: [Int64], filter: IndexFilter) throws -> [Int64: IndexedNoteRow] {
+        var result: [Int64: IndexedNoteRow] = [:]
+        let (conditions, values) = SpaceIndex.conditions(for: filter)
+        // In batches, under SQLite's limit on bound values.
+        for start in stride(from: 0, to: ids.count, by: 500) {
+            let batch = ids[start..<min(start + 500, ids.count)]
+            let marks = Array(repeating: "?", count: batch.count).joined(separator: ", ")
+            let condition = (["n.id IN (\(marks))"] + conditions).joined(separator: " AND ")
+            let rows = try database.query(
+                "SELECT n.id, \(SpaceIndex.noteColumns) FROM notes n WHERE \(condition)",
+                batch.map { .integer($0) } + values
+            ) { ($0.int(0), SpaceIndex.noteRow($0, from: 1)) }
+            for (id, row) in rows {
+                result[id] = row
+            }
+        }
+        return result
+    }
+
+    /// A note's row id, by its path.
+    func rowID(of path: ItemPath) throws -> Int64? {
+        try database.first(
+            "SELECT id FROM notes WHERE path_key = ?", [.text(NameSanitizer.key(path.description))]
+        ) { $0.int(0) }
+    }
+
+    /// The notes a note links to and those that link to it, in this index, by row id.
+    func linkedRows(around rowID: Int64) throws -> Set<Int64> {
+        let outgoing = try database.query(
+            "SELECT n.id FROM links l JOIN notes n ON n.title_key = l.title_key WHERE l.source = ?", [.integer(rowID)]
+        ) { $0.int(0) }
+        let incoming = try database.query(
+            "SELECT l.source FROM notes n JOIN links l ON l.title_key = n.title_key WHERE n.id = ?", [.integer(rowID)]
+        ) { $0.int(0) }
+        return Set(outgoing + incoming)
+    }
+
     /// The notes directly inside a folder, by title.
     func notes(inFolder folder: ItemPath) throws -> [IndexedNoteRow] {
         try database.query(

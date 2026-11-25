@@ -1238,9 +1238,11 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
 
 ### Vectors in the index
 
-- Schema 4 adds `chunks(id, owner_kind, owner, page, location, length, headings, text, model, vector)` and
-  `chunk_text` (FTS5 over the chunks, for "open at the matching spot"), and `meta(key, value)` holding each
-  model's stamp. A vector is a BLOB of `dimension` little-endian Float32s.
+- Schema 4 adds `chunks(id, note, file_key, page, location, length, headings, text, script, model, vector)`
+  and `meta(key, value)`, which holds each script's model stamp and a `chunks_version` that goes up whenever
+  chunks or vectors change (readers cache vectors until it does). A vector is a BLOB of `dimension`
+  little-endian Float32s; an empty one marks a chunk the model couldn't read. A chunk's range is in the
+  note's body, so the app opens a meaning hit at its chunk.
 - **Incremental:** a note's chunks are made again only when its content hash changed; a file's when its size
   or date did. Vectors are made afterwards, in the background, a batch at a time; keyword search works from
   the first moment, and meaning search uses what is there.
@@ -1252,10 +1254,12 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
 
 ### Hybrid search
 
-- `Retrieval.search` keeps its keyword ranking (FTS5 words, then trigrams, then file names) and adds a
-  meaning ranking: the question's vector against every chunk the workplace may read (through `Reach`), best
-  chunk per note or file. The two lists are fused by **reciprocal rank fusion** (score = Σ 1 / (60 + rank)),
-  and the snippet is the best chunk's text with the matching words marked.
+- `Retrieval.search(_:from:)` stays the keyword ranking (FTS5 words, then trigrams, then file names).
+  `Retrieval.searchByMeaning(_:from:)` adds a meaning ranking: the question's vector against every chunk the
+  workplace may read (through `Reach`, with the same space, folder, tag, kind and date filters), best chunk
+  per note, at least `Retrieval.minimumSimilarity`. The two lists are fused by **reciprocal rank fusion**
+  (score = Σ 1 / (60 + rank)); a meaning hit's snippet is its chunk's text. `Retrieval.setEmbedder(_:)` and
+  `Indexer.setEmbedder(_:)` take the same embedder.
 - **Keyword first:** questions of one or two characters, and questions no model can read, are keyword only,
   and keyword results never wait for vectors. The app shows keyword results at once and fuses the meaning
   results in when they arrive.

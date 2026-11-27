@@ -27,8 +27,9 @@ are the lines between them.
 
 ## Status
 
-Elenath is being built in the open, one phase at a time. **Version 0.2 adds the calendar**: everything below
-under "What it does" works. Search by meaning arrives in 0.3, and Nano bot, the assistant, in 0.4.
+Elenath is being built in the open, one phase at a time. **Version 0.3 adds search by meaning** and the text
+inside PDFs and pictures: everything below under "What it does" works. Nano bot, the assistant, arrives in
+0.4.
 
 | Version | What it adds |
 |---|---|
@@ -66,8 +67,13 @@ under "What it does" works. Search by meaning arrives in 0.3, and Nano bot, the 
   folder from the Inbox or the note itself.
 - **Today**: what's up next, what waits in the Inbox, open tasks and the notes you edited lately. The menu bar
   shows today and the next event, with Open Files and Quick Capture.
-- **Search** across titles, text, tags and file names as you type, with filters for space, folder, tag and kind.
-  <kbd>⌘</kbd><kbd>O</kbd> jumps to a note by its title.
+- **Search** across titles, text, tags, attachments and event files as you type, with filters for space,
+  folder, tag and kind. It finds what you mean, too: "why does a skater spin faster" finds the lecture on
+  angular momentum, with the language model built into macOS, on your Mac. <kbd>⌘</kbd><kbd>O</kbd> jumps to a
+  note by its title.
+- **The text inside files**: PDFs (page by page, scans too), pictures such as a photo of the whiteboard, and
+  text files are read on your Mac, so search finds them by what they say, and a PDF's result names its page.
+- **Related**, under each note: the notes and files about the same things, also those it doesn't link to.
 - **Import**: drop Markdown, text, Word and rich-text documents, PDFs, pictures, whole folders or a WhatsApp chat
   on a space or the Inbox. Everything is copied; your originals stay where they were.
 - **Plain files, live.** Rename or move a note and the links to it follow; rename one in Finder and Elenath
@@ -106,7 +112,6 @@ under "What it does" works. Search by meaning arrives in 0.3, and Nano bot, the 
 
 ### Coming later
 
-- **Search by meaning** (0.3): related notes, and the text inside PDFs and pictures.
 - **Nano bot** (0.4), a small assistant that runs on the Mac: it proposes where an Inbox item belongs, which
   notes to link, a tidier version of a messy dump, and answers questions from your notes. It never changes
   anything by itself.
@@ -205,8 +210,12 @@ assistant: you file the Inbox by hand.
 - **No accounts, no analytics, no tracking**, and no third-party code.
 - **Everything stays in your folder**, plus a search index and safety copies in Elenath's own container in
   `~/Library/Containers/io.github.visaug36.Elenath/`.
+- **Reading files and finding meaning happen on your Mac**, with the frameworks built into macOS (PDFKit,
+  Vision and Natural Language). Nothing is uploaded; macOS may download its own language models, as it does
+  for every app.
 - **Sealed spaces stay sealed.** Elenath checks it with tests that plant a word in a sealed space and make sure
-  it never shows up in another space's search, links, tags, tasks or Today. The calendar shows a sealed
+  it never shows up in another space's search, search by meaning, related notes, links, tags, tasks or Today, not
+  even from the text of its files. The calendar shows a sealed
   space's events everywhere by title, time, place and file count, on purpose; the tests check that their
   notes, file names and linked notes stay inside.
 - **Links in notes open safely.** ⌘-click opens web pages and e-mail at once. A link that would open another

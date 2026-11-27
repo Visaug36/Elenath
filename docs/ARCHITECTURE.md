@@ -1250,7 +1250,10 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
   the first moment, and meaning search uses what is there.
 - **Stamped:** when a model's stamp in `meta` differs from the model's now (a macOS update), that model's
   vectors are dropped and made again. Settings › Files › Rebuild Index drops everything.
-- **Pausable:** `Indexer.setPaused(_:)`; it also waits while the Mac is in Low Power Mode.
+- **Pausable:** `Indexer.pause()` and `resume()` hold back reading files and making vectors, never the indexing
+  of notes, so search by words never falls behind; the app pauses for the user (Settings › Files) and while
+  the Mac is in Low Power Mode. `backlog()` counts what is still to do (files waiting, passages waiting) and
+  what was done (files read, unreadable).
 - Cosine similarity is a dot product of normalized vectors, with Accelerate (`vDSP_dotpr`) behind
   `#if canImport(Accelerate)` and a plain loop elsewhere.
 
@@ -1389,6 +1392,22 @@ chunks(..., note, file, page, ...)   -- a chunk is a note's or a file's
 - **The leak tests** plant each marker in a PDF's pages, in a picture in `Attachments`, and in an event file
   of an event homed in each space, with the fake extractor; the event of no home has its own word, which no
   query may ever return.
+
+### In the app (`AppModel+Meaning`)
+
+- **Started with the library:** the indexer gets `SystemTextExtractor` and a `ContextualEmbedder`, retrieval the
+  same embedder. After the first refresh, and after every save, refresh and rebuild, one background pass reads
+  the files that wait (`readAllFiles`) and makes the missing vectors (`embedAll`); asked again while it runs,
+  it runs once more afterwards. A pass that read or made something bumps `contentRevision`, so lists ask again.
+- **Event files:** `CalendarModel.eventFilesMayHaveChanged` is called when the events or the homes are set
+  (any path: open, reload, edit, undo) and when `FilesController` sees an event folder change. The app then
+  works out `CalendarReach.indexedHomes` from `EventFolders.markedFolders()` and calls `setEventFolders` at once,
+  one at a time and once more if asked meanwhile, never after a pause: a file whose event moved into a sealed
+  space leaves the open one first.
+- **Search** runs `search` and shows it, then `searchByMeaning` and shows that if it differs. **Related**
+  (`related(to:from:limit:)` from the note's own container's workplace) loads with the backlinks.
+- **Diagnostics** runs `RetrievalBenchmark` with the real embedder and extractor on a copy of the demo library
+  in a temporary folder, and reports the models by script and the file counts; the crash check runs it too.
 
 ## Later phases
 

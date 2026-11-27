@@ -74,10 +74,13 @@ final class DemoSceneDirector {
         }
     }
 
-    /// Waits up to 30 seconds for the demo library to open and be indexed.
+    /// Waits up to a minute for the demo library to open and be indexed, its files read and its meaning found,
+    /// so search and Related show what they will.
     private func waitUntilReady() async -> Bool {
-        for _ in 0..<120 {
-            if model.state == .ready, !model.isIndexing, model.calendar.state == .ready {
+        for _ in 0..<240 {
+            if model.state == .ready, !model.isIndexing, model.calendar.state == .ready,
+                model.backgroundIndexing == nil, model.eventFolderTask == nil
+            {
                 try? await Task.sleep(for: .milliseconds(300))
                 return true
             }

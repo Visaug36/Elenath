@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Search by meaning**: search finds notes about what you asked, also without its words ("why does a
+  skater spin faster" finds the lecture on angular momentum). Results by words show at once; those by
+  meaning join them a moment later. It uses the language model built into macOS, on this Mac. Where macOS
+  has no model for a language yet, search finds words, as before.
+- **The text inside files**: PDFs (page by page, and scanned pages too), pictures (photos of a whiteboard,
+  screenshots) and text files are read on your Mac, and search finds them by what they say. A PDF's result
+  says which page matched.
+- **Attachments are searched**: files dropped on a note are found by their name and their text. Before,
+  search didn't look in Attachments folders at all.
+- **Event files are searched** in the space their subject's home is in, so a sealed space's event files are
+  found only inside it. Events without a home keep their files out of search; give their subject a home.
+- **Related**, under a note: up to five notes and files about the same things, from what the note's space
+  may read.
+- **Settings › Files** says what the index is doing (reading files, finding meaning) and whether search by
+  meaning is ready on this Mac, with Pause Indexing. Low Power Mode pauses it too. Search by words never
+  waits: notes are indexed as you save them.
+- **The diagnostics report** names the language models for meaning, counts the files read and those that
+  couldn't be, and measures how well search by meaning works on this Mac (questions about the demo library,
+  asked on a copy of it).
+
+### Changed
+
+- **The index is rebuilt once** when 0.3 first opens your library, to read your files' text. Search by words
+  works from the first moment; reading files and finding meaning carry on in the background.
+
 ## [0.2.0] - 2026-11-21
 
 The calendar moves in: everything Ithil 1.0.0 does, inside Elenath, so Elenath is the only app to open.

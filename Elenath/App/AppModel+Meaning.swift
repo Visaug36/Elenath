@@ -89,8 +89,8 @@ extension AppModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-                applyIndexingPause()
+                self.isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+                self.applyIndexingPause()
             }
         }
     }

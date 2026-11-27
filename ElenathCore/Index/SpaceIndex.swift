@@ -571,6 +571,17 @@ final class SpaceIndex {
         }
     }
 
+    /// How many chunks in `scripts` wait for a vector.
+    func chunksWaiting(scripts: Set<String>) throws -> Int {
+        guard !scripts.isEmpty else { return 0 }
+        let marks = Array(repeating: "?", count: scripts.count).joined(separator: ", ")
+        let count = try database.first(
+            "SELECT count(*) FROM chunks WHERE vector IS NULL AND script IN (\(marks))",
+            scripts.sorted().map { .text($0) }
+        ) { $0.int(0) }
+        return Int(count ?? 0)
+    }
+
     /// The scripts of chunks still waiting for a vector, other than `scripts`.
     func waitingScripts(besides scripts: Set<String>) throws -> Set<String> {
         let found = try database.query(

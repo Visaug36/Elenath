@@ -19,10 +19,15 @@
             case .pdf:
                 return try await Self.pdfText(url)
             case .picture:
-                let limit = FileTextLimits.maximumPicturePixels
-                guard let image = await Self.onUtilityQueue({ Self.decodedPicture(url, maximumPixels: limit) })
-                else { return nil }
-                return ExtractedText(pages: [try await Self.recognize(image)], isPaged: false)
+                do {
+                    return try await Self.pictureText(url).map { ExtractedText(pages: [$0], isPaged: false) }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // Vision couldn't read it: it counts as a file that can't be read, not one without text.
+                    Self.log.error("Could not recognize text in a picture", private: String(describing: error))
+                    return nil
+                }
             case .plainText:
                 return nil
             }
@@ -51,7 +56,13 @@
                 try Task.checkCancellation()
                 scanned += 1
                 guard let image = await onUtilityQueue({ renderedPage(index + 1, of: url) }) else { continue }
-                pages[index] = try await recognize(image)
+                do {
+                    pages[index] = try await recognize(image)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    log.error("Could not recognize text on a scanned page", private: String(describing: error))
+                }
             }
             return ExtractedText(pages: pages, isPaged: true).limited()
         }
@@ -112,21 +123,21 @@
 
         // MARK: - Recognition
 
-        /// The lines Vision recognizes, top to bottom.
-        private static func recognize(_ image: SendableImage) async throws -> String {
+        /// A picture's text, or nil when it isn't a picture to read (`decodedPicture`). Throws what Vision throws.
+        static func pictureText(_ url: URL) async throws -> String? {
+            let limit = FileTextLimits.maximumPicturePixels
+            guard let image = await onUtilityQueue({ decodedPicture(url, maximumPixels: limit) }) else { return nil }
+            return try await recognize(image)
+        }
+
+        /// The lines Vision recognizes, top to bottom. Throws what Vision throws.
+        static func recognize(_ image: SendableImage) async throws -> String {
             var request = RecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
             request.automaticallyDetectsLanguage = true
-            do {
-                let observations = try await request.perform(on: image.image, orientation: nil)
-                return observations.map(\.transcript).joined(separator: "\n")
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                log.error("Could not recognize text in a picture", private: String(describing: error))
-                return ""
-            }
+            let observations = try await request.perform(on: image.image, orientation: nil)
+            return observations.map(\.transcript).joined(separator: "\n")
         }
 
         /// Runs `work` on a utility queue, never on the caller's thread or the cooperative pool.

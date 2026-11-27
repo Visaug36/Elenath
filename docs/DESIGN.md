@@ -124,6 +124,8 @@ Defined in `Elenath/Theme/Metrics.swift`.
 | `tray.and.arrow.down` | Quick Capture |
 | `folder` | a folder; the default symbol of a space |
 | `doc.text`, `lightbulb`, `star` | a note, an idea, a goal |
+| `doc.richtext`, `photo`, `doc.plaintext`, `doc` | a PDF, a picture, a text file, any other file (from 0.3) |
+| `calendar` | a file in an event's folder, in search results (from 0.3) |
 | `number` | a tag |
 | `lock.fill` | a sealed space; read-only |
 | `magnifyingglass` | search |
@@ -274,6 +276,13 @@ One pane of Markdown, styled as it is typed. There is no preview.
 - **Linked from**, under the text: a section label, then one row per note that links here: its title (13 pt
   semibold), the line that holds the link (12.5 pt `TextSecondary`) and the space dot. The section is absent
   when nothing links here.
+- **Related** (from 0.3), under Linked from: the same section label style, then up to five rows of notes and
+  files about the same things, best first. A row is the kind's or the file type's symbol and the title (13 pt
+  semibold), the passage that is closest (12.5 pt `TextSecondary`, at most two lines, no marks: nothing
+  matched a word), and the space dot with the place. A file's row adds its page ("Page 12", tabular) when it
+  is a PDF's. Clicking a note opens it; a file opens in its app. The section is filled in the background
+  after the note opens, only from what the note's own space may read, and is absent when nothing is related
+  or meaning search isn't available on the Mac. Never a spinner: it appears when it is ready.
 - Text follows each paragraph's own direction, so right-to-left and mixed text read correctly.
 
 **Banners** sit above the title as a slim strip (`BackgroundSidebar`, 12.5 pt, a symbol, one sentence, buttons
@@ -336,6 +345,15 @@ token color.
 - The results sit in the reading column (720 pt), like every other page.
 - Each result: the title (13 pt semibold) with the kind's symbol, a snippet (12.5 pt `TextSecondary`, the
   matched words in `TextPrimary` on `AccentSoft`), then the space dot, folder and date (tabular).
+- **Two passes** (from 0.3): the results by words show at once, as before; a moment later the results by
+  meaning are merged in (reciprocal rank fusion), without a spinner. The selected row stays selected when it
+  moves. A result found only by meaning has its passage as the snippet, without marks.
+- **Files** (from 0.3) are results like notes: a PDF, a picture or a text file found by the text in it shows
+  the file type's symbol, its name as the title and the matching passage. A PDF's result adds "Page 12"
+  (tabular) after the date. ↩ opens it in its app (Preview cannot be told the page; the row says it).
+- **A file in an event's folder** shows `calendar`, its name, the passage, and in the place line the event's
+  title and day ("Physics Lecture · Mon 16 Nov") instead of a folder. ↩ shows the file in its event's folder
+  in Finder. It is found only where its event's home space may be read, like the event's notes.
 - ↑ and ↓ move, ↩ opens. A result opens at its first match, selected.
 - Empty: `EmptySearch`, "Nothing by that name.", "No notes match “chemistry”."
 
@@ -382,6 +400,16 @@ Sealing or unsealing takes effect at once and can be undone.
 - **Files** (`folder`): the library folder with Show in Finder and Change… (which offers to move everything).
   The index: its state ("Up to date · 1,204 notes") and Rebuild Index. Diagnostics: Run Diagnostics, then the
   report in a monospaced box with Copy Report.
+  - From 0.3 the index's state names what it is doing, one line, 12.5 pt `TextSecondary`: "Up to date",
+    "Updating…", "Reading files · 12 waiting", "Finding meaning · 340 passages waiting", "Paused" or "Paused in
+    Low Power Mode". Beside Rebuild Index, **Pause Indexing** / **Resume Indexing**. Keyword search always
+    works from what is indexed; pausing only holds back reading files and finding meaning.
+  - **Search by meaning**: "Ready" with the scripts it reads ("Latin"), or "Not on this Mac yet: search finds
+    words only" when no model is there. A footnote: "Elenath reads PDFs and pictures on this Mac to find the
+    text in them. Nothing leaves your Mac."
+  - The diagnostics report adds the embedding models by script with their revisions, how many files were
+    read, are waiting or couldn't be read, and the retrieval benchmark: the demo library's questions asked
+    on this Mac's model, "9 of 10 found in the top 5".
 
 - **Calendar** (`calendar`, from 0.2): **Default alert**, **First day of the week**, **Notifications**
   (status and the button that fits), **Show in menu bar**, and **Bring In Ithil Calendar…** (screen 13).

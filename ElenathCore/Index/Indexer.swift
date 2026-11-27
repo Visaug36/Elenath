@@ -38,6 +38,19 @@ public struct IndexStatus: Hashable, Sendable {
     public var isIndexing: Bool
 }
 
+/// What the background passes still have to do, over the Inbox and every space.
+public struct IndexBacklog: Hashable, Sendable {
+    /// Files whose text waits to be read.
+    public var filesWaiting = 0
+    /// Passages (chunks) waiting for a vector from a model the embedder has.
+    public var passagesWaiting = 0
+
+    public init(filesWaiting: Int = 0, passagesWaiting: Int = 0) {
+        self.filesWaiting = filesWaiting
+        self.passagesWaiting = passagesWaiting
+    }
+}
+
 /// Keeps the index in step with the folder (docs/ARCHITECTURE.md, "Index and retrieval").
 ///
 /// The indexer is the only writer. It reads a file again only when its size or date changed, and
@@ -449,6 +462,19 @@ public actor Indexer {
 
     public func status() -> IndexStatus {
         IndexStatus(isPaused: isPaused, isIndexing: running > 0)
+    }
+
+    /// What reading files and making vectors still have to do. A container that can't be read counts nothing.
+    public func backlog() async -> IndexBacklog {
+        var backlog = IndexBacklog()
+        let scripts = Set((await embedder?.models() ?? []).map(\.script))
+        let containers = [Container.inbox] + (await catalog.spaces()).map { Container.space($0.id) }
+        for container in containers {
+            guard let index = try? index(for: container) else { continue }
+            backlog.filesWaiting += (try? index.filesWaiting()) ?? 0
+            backlog.passagesWaiting += (try? index.chunksWaiting(scripts: scripts)) ?? 0
+        }
+        return backlog
     }
 
     // MARK: - Private

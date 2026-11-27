@@ -42,6 +42,8 @@
             defer { folder.remove() }
             let url = folder.child("Whiteboard.png")
             try #require(DemoFiles.picture(lines: ["Free body diagram", "of a ladder"])).write(to: url)
+            // Vision's own error, if it has one, is what the test reports.
+            _ = try await SystemTextExtractor.pictureText(url)
             let text = try #require(try await extractor.text(of: url, kind: .picture))
             #expect(!text.isPaged)
             let words = text.pages.joined(separator: " ").lowercased()

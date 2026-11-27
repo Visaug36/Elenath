@@ -51,11 +51,18 @@ struct HostileInputTests {
     }
 
     /// How long `body` takes.
+    /// How long `body` keeps this thread busy: its CPU time, so tests running at the same moment (Vision reading
+    /// a picture, say) don't count, as they did on the clock.
     static func time(_ body: () -> Void) -> Duration {
-        let clock = ContinuousClock()
-        let start = clock.now
+        let start = threadCPUTime()
         body()
-        return clock.now - start
+        return threadCPUTime() - start
+    }
+
+    private static func threadCPUTime() -> Duration {
+        var spec = timespec()
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &spec)
+        return .seconds(spec.tv_sec) + .nanoseconds(spec.tv_nsec)
     }
 
     /// The shortest of a few runs of `body`: a busy runner slows a run down, never speeds it up.
@@ -66,7 +73,7 @@ struct HostileInputTests {
     /// Runs `make(n)` through `body` at a sixteenth of `size` and at full size: the full size must finish
     /// in `limit`, and take at most 40 times as long as the sixteenth. Linear work takes about 16 times
     /// as long, work that grows with n^1.5 about 64 times and quadratic work 256 times. Each size is timed
-    /// at its best of three runs, and runs under 100 ms are too short to judge.
+    /// at its best of three runs, in the thread's CPU time, and runs under 100 ms are too short to judge.
     static func expectLinear(
         _ name: String, size: Int, limit: Duration = .seconds(20), make: (Int) -> String, _ body: (String) -> Void
     ) {

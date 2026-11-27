@@ -55,8 +55,11 @@ public struct SearchQuery: Hashable, Sendable {
 public struct SearchHit: Hashable, Sendable {
     public enum Item: Hashable, Sendable {
         case note(NoteRef)
-        /// A file that isn't a note, found by its name.
+        /// A file that isn't a note, in a container's folder (attachments included), found by its name or its text.
         case file(Container, ItemPath)
+        /// A file in an event's folder, found in the index of the event's home space: the path is relative to the
+        /// calendar folder, and the hit opens the event's folder.
+        case eventFile(Container, EventLink, ItemPath)
     }
 
     public var item: Item
@@ -65,6 +68,8 @@ public struct SearchHit: Hashable, Sendable {
     /// The words that were looked for, so the note can be opened at the first of them.
     public var matchedTerms: [String]
     public var modified: Date?
+    /// The PDF page the match is on.
+    public var page: Int? = nil
 }
 
 /// A link to a note, from another note.
@@ -219,7 +224,16 @@ public actor Retrieval {
                             matchedTerms: terms.words, modified: row.note.modified), row.rank
                     ))
             }
-            if found.count < query.limit {
+            // Files by the words of a page, ranked with the notes.
+            var foundFiles = Set<Int64>()
+            for row in try index.searchFiles(match: match, filter: filter, limit: query.limit) {
+                let snippet = Retrieval.unmark(row.markedSnippet, terms: terms.words)
+                guard let hit = Retrieval.hit(row.file, in: index.container, snippet: snippet, terms: terms.words)
+                else { continue }
+                foundFiles.insert(row.file.id)
+                ranked.append((Retrieval.onPage(row.page, hit), row.rank))
+            }
+            if found.count + foundFiles.count < query.limit {
                 for (row, body) in try index.searchSubstrings(terms.substringWords, filter: filter, limit: query.limit)
                 where !found.contains(row.path) {
                     loose.append(
@@ -228,14 +242,20 @@ public actor Retrieval {
                             snippet: Retrieval.snippet(of: body, around: terms.words), matchedTerms: terms.words,
                             modified: row.modified))
                 }
+                for row in try index.searchFileSubstrings(terms.substringWords, filter: filter, limit: query.limit)
+                where !foundFiles.contains(row.file.id) {
+                    let snippet = Retrieval.snippet(of: row.markedSnippet, around: terms.words)
+                    guard let hit = Retrieval.hit(row.file, in: index.container, snippet: snippet, terms: terms.words)
+                    else { continue }
+                    foundFiles.insert(row.file.id)
+                    loose.append(Retrieval.onPage(row.page, hit))
+                }
             }
-            if query.tag == nil && query.kind == nil && filter.folder == nil {
-                for file in try index.files(named: terms.words.map(NameSanitizer.key), limit: query.limit) {
-                    files.append(
-                        SearchHit(
-                            item: .file(index.container, file.path), title: file.path.name,
-                            snippet: MarkedText(text: file.path.folder.description), matchedTerms: terms.words,
-                            modified: file.modified))
+            for file in try index.files(named: terms.words.map(NameSanitizer.key), filter: filter, limit: query.limit)
+            where !foundFiles.contains(file.id) {
+                let snippet = MarkedText(text: file.path.folder.description)
+                if let hit = Retrieval.hit(file, in: index.container, snippet: snippet, terms: terms.words) {
+                    files.append(hit)
                 }
             }
         }
@@ -300,70 +320,116 @@ public actor Retrieval {
         var scored: [(score: Float, hit: SearchHit)] = []
         for index in try await readable(from: workplace) {
             guard let filter = Retrieval.filter(for: query, in: index.container, from: workplace) else { continue }
-            let best = try bestChunks(in: index, model: model, near: vector, limit: query.limit, skipping: [])
-            let rows = try index.noteRows(ids: best.map(\.note), filter: filter)
-            for match in best {
-                guard let row = rows[match.note] else { continue }
-                let text = try index.chunkText(match.chunk.chunk)?.text ?? row.preview
-                scored.append(
-                    (
-                        match.score,
-                        SearchHit(
-                            item: .note(NoteRef(container: index.container, path: row.path)), title: row.title,
-                            snippet: Retrieval.snippet(of: text, around: words), matchedTerms: words,
-                            modified: row.modified)
-                    ))
-            }
+            let best = try bestChunks(in: index, model: model, near: vector, limit: query.limit)
+            scored += try Retrieval.hits(for: best, in: index, filter: filter, terms: words)
         }
         scored.sort { $0.score > $1.score }
         return Retrieval.fused(keyword, scored.map(\.hit), limit: query.limit)
     }
 
-    /// Notes about the same things as `note`, best first: notes with chunks close to the note's own (the mean of
-    /// its chunks' vectors), leaving out the note and those it links to or that link to it. Only from containers
-    /// the workplace may read, and nothing for a note it may not.
-    public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [NoteHit] {
+    /// Notes and files about the same things as `note`, best first: those with chunks close to the note's own (the
+    /// mean of its chunks' vectors), leaving out the note, the notes it links to or that link to it, and the files
+    /// it links to or embeds. Each hit's snippet is its closest chunk. Only from containers the workplace may
+    /// read, and nothing for a note it may not.
+    public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [SearchHit] {
         guard let embedder, limit > 0, await allows(note.container, from: workplace) else { return [] }
         let readable = try await readable(from: workplace)
         guard let home = readable.first(where: { $0.container == note.container }),
             let rowID = try home.rowID(of: note.path)
         else { return [] }
-        let linked = try home.linkedRows(around: rowID)
-        var best: [NoteRef: (score: Float, hit: NoteHit)] = [:]
+        let linkedNotes = try home.linkedRows(around: rowID).union([rowID])
+        let linkedFiles = try home.linkedFileRows(of: rowID)
+        var best: [SearchHit.Item: (score: Float, hit: SearchHit)] = [:]
         for model in await embedder.models() {
             let own = try cachedVectors(home, model: model).filter { $0.note == rowID }.map(\.vector)
             guard let mean = VectorMath.mean(own).flatMap(VectorMath.normalized) else { continue }
             for index in readable {
-                let skipping = index.container == note.container ? linked.union([rowID]) : []
-                let matches = try bestChunks(in: index, model: model, near: mean, limit: limit, skipping: skipping)
-                let rows = try index.noteRows(ids: matches.map(\.note), filter: IndexFilter())
-                for match in matches {
-                    guard let row = rows[match.note] else { continue }
-                    let hit = Retrieval.hit(row, in: index.container)
-                    if match.score > (best[hit.note]?.score ?? -1) {
-                        best[hit.note] = (match.score, hit)
-                    }
+                let isHome = index.container == note.container
+                let matches = try bestChunks(
+                    in: index, model: model, near: mean, limit: limit, skippingNotes: isHome ? linkedNotes : [],
+                    skippingFiles: isHome ? linkedFiles : [])
+                for (score, hit) in try Retrieval.hits(for: matches, in: index, filter: IndexFilter(), terms: [])
+                where score > (best[hit.item]?.score ?? -1) {
+                    best[hit.item] = (score, hit)
                 }
             }
         }
-        return best.values.sorted { $0.score > $1.score }.prefix(limit).map(\.hit)
+        return best.values.sorted { first, second in
+            first.score != second.score ? first.score > second.score : first.hit.title < second.hit.title
+        }.prefix(limit).map(\.hit)
     }
 
-    /// The notes of an index with a chunk closest to `vector`, best chunk per note, at least
+    /// What a chunk belongs to.
+    private enum ChunkOwner: Hashable {
+        case note(Int64)
+        case file(Int64)
+    }
+
+    private typealias ChunkMatch = (owner: ChunkOwner, chunk: ChunkVector, score: Float)
+
+    /// The notes and files of an index with a chunk closest to `vector`, best chunk each, at least
     /// `minimumSimilarity`, at most `limit` of them.
     private func bestChunks(
-        in index: SpaceIndex, model: EmbeddingModel, near vector: [Float], limit: Int, skipping: Set<Int64>
-    ) throws -> [(note: Int64, chunk: ChunkVector, score: Float)] {
-        var best: [Int64: (chunk: ChunkVector, score: Float)] = [:]
+        in index: SpaceIndex, model: EmbeddingModel, near vector: [Float], limit: Int,
+        skippingNotes: Set<Int64> = [], skippingFiles: Set<Int64> = []
+    ) throws -> [ChunkMatch] {
+        var best: [ChunkOwner: (chunk: ChunkVector, score: Float)] = [:]
         for chunk in try cachedVectors(index, model: model) {
-            guard let note = chunk.note, !skipping.contains(note) else { continue }
+            let owner: ChunkOwner
+            if let note = chunk.note {
+                guard !skippingNotes.contains(note) else { continue }
+                owner = .note(note)
+            } else if let file = chunk.file {
+                guard !skippingFiles.contains(file) else { continue }
+                owner = .file(file)
+            } else {
+                continue
+            }
             let score = VectorMath.dot(vector, chunk.vector)
-            if score >= Retrieval.minimumSimilarity, score > (best[note]?.score ?? -1) {
-                best[note] = (chunk, score)
+            if score >= Retrieval.minimumSimilarity, score > (best[owner]?.score ?? -1) {
+                best[owner] = (chunk, score)
             }
         }
-        return best.map { (note: $0.key, chunk: $0.value.chunk, score: $0.value.score) }
+        return best.map { (owner: $0.key, chunk: $0.value.chunk, score: $0.value.score) }
             .sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+    }
+
+    /// Search hits for chunk matches that pass the filter, each with its chunk's text as the snippet.
+    private static func hits(
+        for matches: [ChunkMatch], in index: SpaceIndex, filter: IndexFilter, terms: [String]
+    ) throws -> [(score: Float, hit: SearchHit)] {
+        var noteIDs: [Int64] = []
+        var fileIDs: [Int64] = []
+        for match in matches {
+            switch match.owner {
+            case .note(let id): noteIDs.append(id)
+            case .file(let id): fileIDs.append(id)
+            }
+        }
+        let notes = try index.noteRows(ids: noteIDs, filter: filter)
+        let files = try index.fileRows(ids: fileIDs, filter: filter)
+        var result: [(score: Float, hit: SearchHit)] = []
+        for match in matches {
+            let text = try index.chunkText(match.chunk.chunk)?.text ?? ""
+            let snippet = Retrieval.snippet(of: text, around: terms)
+            switch match.owner {
+            case .note(let id):
+                guard let row = notes[id] else { continue }
+                result.append(
+                    (
+                        match.score,
+                        SearchHit(
+                            item: .note(NoteRef(container: index.container, path: row.path)), title: row.title,
+                            snippet: snippet, matchedTerms: terms, modified: row.modified)
+                    ))
+            case .file(let id):
+                guard let row = files[id],
+                    let hit = Retrieval.hit(row, in: index.container, snippet: snippet, terms: terms)
+                else { continue }
+                result.append((match.score, Retrieval.onPage(match.chunk.page, hit)))
+            }
+        }
+        return result
     }
 
     /// An index's vectors of one model, read again only when its chunks changed.
@@ -749,6 +815,30 @@ public actor Retrieval {
     }
 
     // MARK: - Private: results
+
+    /// A file's search hit: in the container's folder, or in an event's folder. Nil for an event file whose
+    /// occurrence can't be read.
+    private static func hit(
+        _ file: IndexedFileRow, in container: Container, snippet: MarkedText, terms: [String]
+    ) -> SearchHit? {
+        let item: SearchHit.Item
+        switch file.origin {
+        case .folder:
+            item = .file(container, file.path)
+        case .event:
+            guard let event = file.event else { return nil }
+            item = .eventFile(container, event, file.path)
+        }
+        return SearchHit(
+            item: item, title: file.path.name, snippet: snippet, matchedTerms: terms, modified: file.modified)
+    }
+
+    /// The hit with the PDF page its match is on.
+    private static func onPage(_ page: Int?, _ hit: SearchHit) -> SearchHit {
+        var hit = hit
+        hit.page = page
+        return hit
+    }
 
     private static func hit(_ row: IndexedNoteRow, in container: Container) -> NoteHit {
         NoteHit(

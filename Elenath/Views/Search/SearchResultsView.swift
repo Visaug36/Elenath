@@ -257,6 +257,8 @@ struct SearchResultsView: View {
             model.open(note, highlighting: terms)
         case .file(let container, let path):
             model.openFile(path, in: container)
+        case .eventFile(_, _, let path):
+            model.revealEventFile(path)
         }
     }
 }
@@ -322,6 +324,7 @@ private struct SearchResultRow: View {
         switch hit.item {
         case .note: "doc.text"
         case .file: "doc"
+        case .eventFile: "calendar"
         }
     }
 
@@ -329,6 +332,7 @@ private struct SearchResultRow: View {
         switch hit.item {
         case .note(let note): (note.container, note.path.folder)
         case .file(let container, let path): (container, path.folder)
+        case .eventFile(let container, _, _): (container, .root)
         }
     }
 

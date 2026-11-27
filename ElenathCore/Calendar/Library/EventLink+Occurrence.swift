@@ -7,6 +7,11 @@ extension EventLink {
         self.init(eventID: occurrence.event.id, day: occurrence.date.isoString)
     }
 
+    /// The link for an occurrence's id, as `init(_:)` gives for the occurrence.
+    public init(_ id: Occurrence.ID) {
+        self.init(eventID: id.eventID, day: id.date.isoString)
+    }
+
     /// The occurrence this link names, when its day is a real date.
     public var occurrenceID: Occurrence.ID? {
         guard let date = CalendarDate(isoString: day), date.isValid else { return nil }

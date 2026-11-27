@@ -366,6 +366,18 @@ Keep this section current. Newest first.
 - Not covered yet: a space folder renamed in Finder breaks links written as `[[Space/Title]]` in other spaces (renaming the space in Elenath rewrites them). The banner only offers notes that moved inside one space.
 
 ### Status
+- 2026-11-27: **Phase 5: the text of files is in (task 35).** PDFs by page (PDFKit, and Vision for pages
+  without text), pictures (Vision), and plain text files are read a file at a time into index schema 5, with
+  their pages in their own full-text tables and their chunks beside the notes'. Attachments are indexed now
+  (the walk skipped `Attachments` before, so even their names weren't found). Event files are indexed into
+  their subject's home space (`CalendarReach.indexedHomes`, `Indexer.setEventFolders`, removing before
+  adding), and into no index without a usable home. A reading is counted before it starts, so a file that
+  crashes or hangs twice isn't tried again until it changes; a reading has a deadline that a quit cuts short;
+  what was read of a file that changed meanwhile is thrown away. `related` returns notes and files. The leak
+  tests plant every marker in PDF pages, an attachment's picture and event files, and fail when event files
+  are filed into the wrong space or not removed when their home moves into a seal (both shown by breaking the
+  code). 612 core tests pass locally; the real extractor's tests run on the macOS runners only. Next: the app
+  layer (task 36), DESIGN.md first, then the full check and 0.3.0.
 - 2026-11-25: **Phase 5 (meaning) in progress; stopped at the user's request** ("finish this little task
   and stop"). Done on `claude/new-session-fplgmb` (598 core tests pass locally): the contract in
   docs/ARCHITECTURE.md ("Meaning"), the chunker, the embedder layer (`Embedder`, models by script,

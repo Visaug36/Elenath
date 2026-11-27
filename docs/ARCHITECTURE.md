@@ -297,7 +297,9 @@ public enum LibraryCatalogError: Error, Equatable, Sendable {
   its safety copy is gone too. To tell the two apart, the safety directory keeps a record of which folder
   was which space (`<library id>/folders.json`).
 - Every path it hands out is checked with `PathContainment`: inside the library, symbolic links resolved.
-  Listings leave out hidden items, Elenath's own folders, `Attachments`, board packages and links.
+  Listings leave out hidden items, Elenath's own folders, `Attachments`, board packages and links; a listing
+  names a folder's attachments folder (`FolderListing.attachmentsFolder`), and `attachmentFiles(in:of:)` lists the
+  files in it for the index.
 - Sealing a space, or unsealing one, is `update(_:)`. The index needs no rebuild: each space has its own
   database, and `Reach` decides at query time what may be read.
 
@@ -1238,13 +1240,13 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
 
 ### Vectors in the index
 
-- Schema 4 adds `chunks(id, note, file_key, page, location, length, headings, text, script, model, vector)`
+- Schema 4 added `chunks(id, note, file, page, location, length, headings, text, script, model, vector)`
   and `meta(key, value)`, which holds each script's model stamp and a `chunks_version` that goes up whenever
   chunks or vectors change (readers cache vectors until it does). A vector is a BLOB of `dimension`
   little-endian Float32s; an empty one marks a chunk the model couldn't read. A chunk's range is in the
   note's body, so the app opens a meaning hit at its chunk.
 - **Incremental:** a note's chunks are made again only when its content hash changed; a file's when its size
-  or date did. Vectors are made afterwards, in the background, a batch at a time; keyword search works from
+  or date did (schema 5, below). Vectors are made afterwards, in the background, a batch at a time; keyword search works from
   the first moment, and meaning search uses what is there.
 - **Stamped:** when a model's stamp in `meta` differs from the model's now (a macOS update), that model's
   vectors are dropped and made again. Settings › Files › Rebuild Index drops everything.
@@ -1254,7 +1256,8 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
 
 ### Hybrid search
 
-- `Retrieval.search(_:from:)` stays the keyword ranking (FTS5 words, then trigrams, then file names).
+- `Retrieval.search(_:from:)` stays the keyword ranking (FTS5 words in notes and in files' pages, then trigrams,
+  then file names).
   `Retrieval.searchByMeaning(_:from:)` adds a meaning ranking: the question's vector against every chunk the
   workplace may read (through `Reach`, with the same space, folder, tag, kind and date filters), best chunk
   per note, at least `Retrieval.minimumSimilarity`. The two lists are fused by **reciprocal rank fusion**
@@ -1271,9 +1274,10 @@ public struct EmbeddingModel: Hashable, Codable, Sendable {
 
 ```swift
 // Retrieval
-/// Notes about the same things as `note`, best first: chunk vectors close to the note's own, ignoring notes
-/// it already links to or that link to it. Only from containers the workplace may read.
-public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [NoteHit]
+/// Notes and files about the same things as `note`, best first: chunk vectors close to the note's own,
+/// ignoring notes it already links to or that link to it, and files it links to. Only from containers the
+/// workplace may read.
+public func related(to note: NoteRef, from workplace: Workplace, limit: Int) async throws -> [SearchHit]
 ```
 
 - Shown under the note, after the backlinks ("Related"), and later used by Nano bot's Link job.
@@ -1283,19 +1287,108 @@ public func related(to note: NoteRef, from workplace: Workplace, limit: Int) asy
 ### PDFs, pictures and event files
 
 ```swift
-public protocol TextExtractor: Sendable {
-    func pages(ofPDF url: URL) async -> [String]?          // PDFKit; nil when it isn't a PDF it can read
-    func text(ofImage url: URL) async -> String?           // Vision text recognition
+/// What a file's text is read as, by its extension; nil for every other file (found by its name only).
+public enum FileTextKind: String, Hashable, Sendable {
+    case pdf          // .pdf: PDFKit's text by page, Vision for pages that have none (scans)
+    case picture      // .png .jpg .jpeg .heic .heif .tif .tiff .gif .bmp .webp: Vision text recognition
+    case plainText    // .txt .text .csv .tsv, and .md/.markdown where they aren't notes: read as UTF-8
+    public init?(fileName: String)
 }
+public enum FileTextLimits {
+    public static let maximumPages = 200                    // a PDF's first 200 pages
+    public static let maximumTextBytes = 4 * 1024 * 1024    // of text per file, as NoteLimits reads of a note
+    public static let maximumScannedPages = 20              // pages without text that are recognized
+    public static let maximumPicturePixels = 100_000_000    // larger pictures aren't read
+    public static let decodedSide = 4096                    // pictures and scans are decoded at most this large
+    public static let timeout: Duration = .seconds(120)     // a reading that takes longer is given up
+    public static let maximumAttempts = 2                   // readings started and never finished, then no more
+}
+/// A file's text: one entry per PDF page, one for a picture or a text file.
+public struct ExtractedText: Hashable, Sendable {
+    public var pages: [String]
+    public var isPaged: Bool        // a PDF: chunks and hits carry their page
+}
+/// Reads PDFs and pictures. The real one is `SystemTextExtractor`; tests use a fake. Plain text is read by
+/// the indexer itself, on every platform.
+public protocol TextExtractor: Sendable {
+    /// Nil when the file can't be read as `kind`: not a PDF it can open, locked, broken, too large.
+    func text(of url: URL, kind: FileTextKind) async throws -> ExtractedText?
+}
+// Indexer
+public func setTextExtractor(_ extractor: (any TextExtractor)?)
+@discardableResult public func readFiles(_ container: Container) async throws -> Int   // how many were read
+@discardableResult public func readAllFiles() async -> Int
 ```
 
-- Behind `#if canImport(PDFKit)` and `#if canImport(Vision)`; tests use a fake. Limits as for notes: at most 200
-  pages and 4 MB of text per PDF, pictures up to 100 megapixels.
-- **Files in spaces** (attachments and other files) get chunks of their text, found by search and related
-  notes like notes are, opened in their app or Quick Look.
-- **Event files** are indexed into their subject's home space (`CalendarReach.home`), so that space's seal
-  applies to them; files of events without a home, or whose home can't be used, are indexed nowhere. The app
-  hands the indexer each homed occurrence's folder (`EventFolders`); a search hit opens the event's folder.
+- **`SystemTextExtractor`** sits behind `#if canImport(PDFKit) && canImport(Vision)`. PDFKit is imported by
+  class only (`import class PDFKit.PDFDocument`), because the module brings AppKit along. A page's text is
+  `PDFPage.string`; a page without any is drawn with Core Graphics at most `decodedSide` large and recognized
+  with Vision's `RecognizeTextRequest` (accurate, language correction, languages detected), for at most
+  `maximumScannedPages` pages. A picture's header is read with ImageIO first: over `maximumPicturePixels` it
+  isn't decoded; otherwise it is decoded as a thumbnail at most `decodedSide` large, turned upright, and
+  recognized. The work runs on a utility queue, never on the caller's thread.
+- **Files in a container's folder**, attachments included, are rows of `files` (origin "folder"). The
+  walk now goes into each folder's `Attachments` (`FolderListing.attachments`), never into board packages.
+- **Event files** are rows of their home space's `files` (origin "event"): their path is relative to the
+  calendar folder, their folder is the home's folder, and they keep their occurrence. So the home space's
+  seal applies to them, through `Reach`, like to anything else in it.
+
+  ```swift
+  public struct EventFolderHome: Hashable, Sendable {
+      public var occurrence: EventLink
+      public var folder: ItemPath       // relative to the calendar folder: "2026-11-16/14.00 Physics Lecture"
+      public var space: SpaceID
+      public var homeFolder: ItemPath   // a search narrowed to this folder finds the event's files
+  }
+  // CalendarReach
+  /// Where each event folder's files are indexed: the space of its event's home. Folders of events without a
+  /// home, with a home that can't be used, or that no event claims, are left out: indexed nowhere.
+  public func indexedHomes(of folders: [Occurrence.ID: URL], in document: CalendarDocument,
+                           calendarFolder: URL) -> [EventFolderHome]
+  // Indexer
+  /// Which event folders are indexed, and where. Folders that left a space are removed from it before any
+  /// other is added, and each space's event files are listed again (also at every refresh).
+  public func setEventFolders(_ folders: [EventFolderHome]) async
+  ```
+
+  The app calls `EventFolders.markedFolders()`, then `indexedHomes`, then `setEventFolders`, whenever the
+  calendar, a subject's home or an event folder changes. Until it has, a refresh leaves event files as they
+  are.
+- **Reading, a file at a time** (`Indexer.readFiles(_:)`, `readAllFiles()`), after the walk and before the
+  vectors, the oldest row first. A file's reading is counted in the database before it starts: a file whose
+  reading was started `maximumAttempts` times and never finished (a crash, a quit) is not tried again until it
+  changes, so a hostile PDF can't crash Elenath at every launch. A reading that takes longer than
+  `FileTextLimits.timeout` (two minutes) is given up and the file marked unreadable; the wait ends at once
+  when the pass is cancelled (`withDeadline`), and a framework call that doesn't notice finishes unwaited
+  for. The file must have the size and date its row has, before and after its reading, and its row must not
+  have changed meanwhile, else what was read is thrown away and the next refresh has it read again. Plain
+  text is read without an extractor; PDFs and pictures wait for one. Pauses like every pass, and other passes
+  run between files.
+- **Incremental:** a file's text is read again only when its size or date changed; a file that left keeps
+  nothing behind.
+
+### File text in the index (schema 5)
+
+```sql
+files(id, origin, path, path_key, name_key, folder_key, is_folder, modified, byte_count, event,
+      text_state, attempts)          -- UNIQUE(origin, path_key); text_state: NULL to read, 1 read, 2 none, 3 failed
+file_pages(id, file, page)           -- one row per page of text (page is NULL for a picture or a text file)
+file_text USING fts5(body)           -- rowid = file_pages.id, words
+file_trigram USING fts5(body, tokenize = 'trigram', content = '')   -- substrings, as for notes
+chunks(..., note, file, page, ...)   -- a chunk is a note's or a file's
+```
+
+- **Search** finds a file by the words of one of its pages (FTS5, best page per file), then, when words find
+  little, by substrings, then by its name. A hit for a file says its page (`SearchHit.page`); a hit for an
+  event file is `.eventFile(container, occurrence, path)` and opens the event's folder. The filters apply: a
+  folder to the file's folder (an event file's home folder), dates to its date; a tag or a kind leaves files
+  out.
+- **Meaning search and related** compare file chunks like note chunks, best chunk per file.
+  `related(to:from:limit:)` returns `SearchHit`s, notes and files, leaving out the note, the notes it links to
+  or that link to it, and the files it links to or embeds.
+- **The leak tests** plant each marker in a PDF's pages, in a picture in `Attachments`, and in an event file
+  of an event homed in each space, with the fake extractor; the event of no home has its own word, which no
+  query may ever return.
 
 ## Later phases
 

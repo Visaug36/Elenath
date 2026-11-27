@@ -54,6 +54,8 @@ public struct FolderListing: Hashable, Sendable {
     public var folders: [ItemPath]
     public var notes: [NoteEntry]
     public var files: [FileEntry]
+    /// The folder's attachments folder, when it has one: `attachmentFiles(in:of:)` lists what is in it.
+    public var attachmentsFolder: ItemPath? = nil
 }
 
 public enum LibraryCatalogError: Error, Equatable, Sendable {
@@ -394,6 +396,8 @@ public actor LibraryCatalog {
             if info.isDirectory {
                 if !NameSanitizer.isReservedInSpace(name) {
                     listing.folders.append(path)
+                } else if NameSanitizer.key(name) == NameSanitizer.key(NameSanitizer.attachmentsFolderName) {
+                    listing.attachmentsFolder = path
                 }
             } else if ItemPath.isNoteFileName(name) {
                 listing.notes.append(NoteEntry(path: path, modified: info.modified, byteCount: info.byteCount))
@@ -405,6 +409,35 @@ public actor LibraryCatalog {
         listing.notes.sort { Self.comesBefore($0.path.name, $1.path.name) }
         listing.files.sort { Self.comesBefore($0.path.name, $1.path.name) }
         return listing
+    }
+
+    /// Every file inside an attachments folder, in its subfolders too: they are files, never notes. Hidden items,
+    /// links, named pipes and devices are left out, and so is anything past `limit` files or 16 folders deep.
+    public func attachmentFiles(
+        in folder: ItemPath, of container: Container, limit: Int = 10_000
+    ) throws
+        -> [FileEntry]
+    {
+        var files: [FileEntry] = []
+        var pending: [(path: ItemPath, depth: Int)] = [(folder, 0)]
+        while let (current, depth) = pending.popLast(), files.count < limit {
+            let url = try url(for: current, in: container, isDirectory: true)
+            guard let info = fileSystem.info(at: url), info.isDirectory, !info.isSymbolicLink else { continue }
+            for item in try fileSystem.contentsOfDirectory(at: url) {
+                let name = item.lastPathComponent
+                guard !name.hasPrefix("."), name != "Icon\r", let path = current.appending(name),
+                    let info = fileSystem.info(at: item), !info.isSymbolicLink, !info.isSpecial
+                else { continue }
+                if info.isDirectory {
+                    if depth < 16 {
+                        pending.append((path, depth + 1))
+                    }
+                } else if files.count < limit {
+                    files.append(FileEntry(path: path, modified: info.modified, byteCount: info.byteCount))
+                }
+            }
+        }
+        return files.sorted { Self.comesBefore($0.path.description, $1.path.description) }
     }
 
     /// Whether `url` is the library folder or inside it, with symbolic links resolved.

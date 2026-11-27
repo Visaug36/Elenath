@@ -38,10 +38,33 @@ public enum DemoLibrary {
             let url = try await catalog.url(for: created.ref.path, in: container, isDirectory: false)
             try? FileManager.default.setAttributes([.modificationDate: written], ofItemAtPath: url.path)
         }
+        if let uni = containers["Uni"] {
+            try await writeFiles(in: uni, catalog: catalog, now: now, fileSystem: fileSystem)
+        }
         try await writeCalendar(
             catalog: catalog, notes: store, libraryID: libraryID, root: root, safetyDirectory: safetyDirectory,
             now: now, timeZone: timeZone, fileSystem: fileSystem)
         return try await catalog.open()
+    }
+
+    /// Files beside Uni's notes, for searching their text: a formula sheet, and a photo of the whiteboard in a
+    /// lecture's attachments (only where Core Text can draw it).
+    private static func writeFiles(
+        in uni: Container, catalog: LibraryCatalog, now: Date, fileSystem: any FileSystem
+    ) async throws {
+        guard let physicsPath = ItemPath("Physics") else { return }
+        let physics = try await catalog.url(for: physicsPath, in: uni, isDirectory: true)
+        let sheet = physics.appending(component: "Formula sheet.pdf", directoryHint: .notDirectory)
+        try fileSystem.writeAtomically(DemoFiles.formulaSheet, to: sheet)
+        try? FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-50 * 3600)], ofItemAtPath: sheet.path)
+        guard let whiteboard = DemoFiles.picture(lines: DemoFiles.whiteboardLines) else { return }
+        let attachments = physics.appending(component: NameSanitizer.attachmentsFolderName, directoryHint: .isDirectory)
+        try fileSystem.createDirectory(at: attachments)
+        let photo = attachments.appending(component: DemoFiles.whiteboardName, directoryHint: .notDirectory)
+        try fileSystem.writeAtomically(whiteboard, to: photo)
+        try? FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-1 * 3600)], ofItemAtPath: photo.path)
     }
 
     // MARK: - Content

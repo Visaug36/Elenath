@@ -203,6 +203,16 @@ extension AppModel {
         }
     }
 
+    /// Shows a file of an event's folder in Finder, in that folder: what a search hit for an event file opens.
+    /// `path` is relative to the calendar folder, and nothing outside it is shown.
+    func revealEventFile(_ path: ItemPath) {
+        guard let rootURL else { return }
+        let calendar = LibraryLayout.calendarFolder(in: rootURL)
+        let url = path.url(under: calendar, isDirectory: false)
+        guard PathContainment.contains(url, in: calendar) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     /// Opens a file that isn't a note in the app the Mac uses for it, asking first about anything that
     /// could run as a program (`openLibraryFile`).
     func openFile(_ path: ItemPath, in container: Container) {

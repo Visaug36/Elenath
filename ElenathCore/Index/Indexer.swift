@@ -22,6 +22,8 @@ public struct IndexReport: Hashable, Sendable {
     /// Vectors made by an embedding pass, and whether chunks are still waiting for one.
     public var vectorsMade = 0
     public var vectorsPending = false
+    /// Rows of files (and folders) a pass added, changed or removed.
+    public var filesChanged = 0
 
     public init() {}
 
@@ -56,6 +58,12 @@ public actor Indexer {
     private var embedder: (any Embedder)?
     /// The containers whose models were compared with the index's stamps in this embedding pass.
     private var checkedStamps: Set<Container> = []
+    private var extractor: (any TextExtractor)?
+    /// How long a file's reading may take before it is given up.
+    private var readingTimeout = FileTextLimits.timeout
+    /// The event folders whose files are indexed, by the space each is indexed into; nil until the app has said
+    /// (`setEventFolders(_:)`), and a refresh leaves event files as they are until then.
+    private var eventFolders: [Container: [EventFolderHome]]?
 
     /// How many notes are read and written in one transaction.
     private static let chunkSize = 100
@@ -201,6 +209,224 @@ public actor Indexer {
         return report
     }
 
+    // MARK: - Files' text
+
+    /// The extractor for PDFs and pictures; without one, their text waits (plain text is read regardless).
+    public func setTextExtractor(_ extractor: (any TextExtractor)?) {
+        self.extractor = extractor
+    }
+
+    /// For tests: how long a reading may take.
+    func setReadingTimeout(_ timeout: Duration) {
+        readingTimeout = timeout
+    }
+
+    /// Reads the text of the container's files that wait for it, a file at a time, oldest first, and returns how
+    /// many were read. Each reading is counted in the database before it starts, so a file that crashes or hangs
+    /// is tried at most `FileTextLimits.maximumAttempts` times until it changes; one that takes longer than the
+    /// timeout is given up. A file that changed since the walk is left for the next refresh. Other passes over
+    /// the container run between files, and the pass waits while paused.
+    @discardableResult
+    public func readFiles(_ container: Container) async throws -> Int {
+        var cursor: Int64 = 0
+        var read = 0
+        while true {
+            try await waitWhilePaused()
+            let after = cursor
+            let next = try await serialized(container) {
+                try await self.replacingDamaged(container, otherwise: FileToRead?.none) {
+                    try await self.performNextFileToRead(container, after: after)
+                }
+            }
+            guard let file = next else { return read }
+            cursor = file.id
+            guard let url = await fileURL(of: file, in: container),
+                let info = fileSystem.info(at: url), !info.isDirectory, !info.isSymbolicLink, !info.isSpecial,
+                info.byteCount == file.byteCount, Indexer.sameMoment(info.modified, file.modified)
+            else { continue }
+            let extractor = self.extractor
+            guard file.kind == .plainText || extractor != nil else { continue }
+            try await serialized(container) {
+                try await self.replacingDamaged(container, otherwise: ()) {
+                    try await self.performStartReading(file, in: container)
+                }
+            }
+            let text: ExtractedText?
+            if file.kind == .plainText {
+                text = (try? fileSystem.readData(at: url, upTo: FileTextLimits.maximumTextBytes)).map {
+                    ExtractedText.plainText($0)
+                }
+            } else if let extractor {
+                switch await withDeadline(readingTimeout, { try await extractor.text(of: url, kind: file.kind) }) {
+                case .success(let extracted)?:
+                    text = extracted?.limited()
+                case .failure(let error)? where error is CancellationError:
+                    throw error
+                case .failure(let error)?:
+                    log.error("Could not read a file's text", private: String(describing: error))
+                    text = nil
+                case nil:
+                    log.error("Gave up reading a file's text: it took too long")
+                    text = nil
+                }
+            } else {
+                continue
+            }
+            // A file that changed while it was read: what was read may be half of each. The next refresh sees the
+            // change and has it read again.
+            guard let after = fileSystem.info(at: url), after.byteCount == file.byteCount,
+                Indexer.sameMoment(after.modified, file.modified)
+            else { continue }
+            let stored = try await serialized(container) {
+                try await self.replacingDamaged(container, otherwise: false) {
+                    try await self.performFinishReading(file, text: text, in: container)
+                }
+            }
+            if stored, text?.hasText == true {
+                read += 1
+            }
+        }
+    }
+
+    private func performNextFileToRead(_ container: Container, after cursor: Int64) throws -> FileToRead? {
+        try index(for: container).nextFileToRead(after: cursor)
+    }
+
+    private func performStartReading(_ file: FileToRead, in container: Container) throws {
+        try index(for: container).startReading(file)
+    }
+
+    private func performFinishReading(
+        _ file: FileToRead, text: ExtractedText?, in container: Container
+    ) throws -> Bool {
+        try index(for: container).finishReading(file, text: text)
+    }
+
+    /// Reads the files of the Inbox and every space. A container that fails is logged and skipped.
+    @discardableResult
+    public func readAllFiles() async -> Int {
+        var read = 0
+        let containers = [Container.inbox] + (await catalog.spaces()).map { Container.space($0.id) }
+        for container in containers {
+            do {
+                read += try await readFiles(container)
+            } catch is CancellationError {
+                break
+            } catch {
+                log.error("Could not read the files of a container", private: String(describing: error))
+            }
+        }
+        return read
+    }
+
+    /// Where a file of the container's index is: in its folder, or in the calendar's folder for an event file.
+    /// Nil when that place is outside the library or can't be found.
+    private func fileURL(of file: FileToRead, in container: Container) async -> URL? {
+        switch file.origin {
+        case .folder:
+            return try? await catalog.url(for: file.path, in: container, isDirectory: false)
+        case .event:
+            let calendar = LibraryLayout.calendarFolder(in: catalog.root)
+            let url = file.path.url(under: calendar, isDirectory: false)
+            return PathContainment.contains(url, in: calendar) ? url : nil
+        }
+    }
+
+    // MARK: - Event files
+
+    /// Which event folders have their files indexed, and into which space (`CalendarReach.indexedHomes`). First
+    /// every space loses the event files that are no longer its own, so a file whose event moved to another home
+    /// is never found in the old one once the new one has it; then each space's event files are listed again.
+    public func setEventFolders(_ folders: [EventFolderHome]) async {
+        var assigned: [Container: [EventFolderHome]] = [:]
+        for home in folders {
+            assigned[.space(home.space), default: []].append(home)
+        }
+        eventFolders = assigned
+        let containers = (await catalog.spaces()).map { Container.space($0.id) }
+        for container in containers {
+            let kept = Set((assigned[container] ?? []).map(\.occurrence.string))
+            do {
+                try await serialized(container) {
+                    try await self.replacingDamaged(container, otherwise: ()) {
+                        try await self.performRemoveEventFiles(container, keeping: kept)
+                    }
+                }
+            } catch {
+                log.error("Could not remove event files from a space", private: String(describing: error))
+            }
+        }
+        for container in containers {
+            guard let homes = assigned[container] else { continue }
+            do {
+                try await serialized(container) {
+                    try await self.replacingDamaged(container, otherwise: ()) {
+                        _ = try await self.syncEventFiles(container, homes: homes)
+                    }
+                }
+            } catch {
+                log.error("Could not list event files into a space", private: String(describing: error))
+            }
+        }
+    }
+
+    private func performRemoveEventFiles(_ container: Container, keeping kept: Set<String>) throws {
+        let index = try index(for: container)
+        try index.transaction {
+            _ = try index.removeEventFiles(keeping: kept)
+        }
+    }
+
+    /// Lists the files of `homes`' folders into the container's index, as event files, and drops the rest.
+    private func syncEventFiles(_ container: Container, homes: [EventFolderHome]) throws -> Int {
+        let index = try index(for: container)
+        let records = eventFileRecords(homes)
+        return try index.transaction {
+            try index.removeEventFiles(keeping: Set(homes.map(\.occurrence.string)))
+                + index.syncFiles(records, origin: .event)
+        }
+    }
+
+    /// The most files listed from one event folder.
+    static let maximumEventFiles = 10_000
+
+    /// The files in the event folders, in their subfolders too, as rows of origin `.event`: hidden items (the
+    /// marker among them), links, named pipes and devices are left out, and so is anything past
+    /// `maximumEventFiles` or eight folders deep. A folder that isn't inside the calendar folder is skipped.
+    private func eventFileRecords(_ homes: [EventFolderHome]) -> [FileRecord] {
+        let calendar = LibraryLayout.calendarFolder(in: catalog.root)
+        var records: [FileRecord] = []
+        for home in homes {
+            let top = home.folder.url(under: calendar, isDirectory: true)
+            guard home.folder.components.count >= 2, PathContainment.contains(top, in: calendar) else { continue }
+            var pending: [(path: ItemPath, url: URL, depth: Int)] = [(home.folder, top, 0)]
+            var count = 0
+            while let (path, url, depth) = pending.popLast(), count < Indexer.maximumEventFiles {
+                guard let info = fileSystem.info(at: url), info.isDirectory, !info.isSymbolicLink,
+                    let items = try? fileSystem.contentsOfDirectory(at: url)
+                else { continue }
+                for item in items {
+                    let name = item.lastPathComponent
+                    guard !name.hasPrefix("."), name != "Icon\r", let child = path.appending(name),
+                        let info = fileSystem.info(at: item), !info.isSymbolicLink, !info.isSpecial
+                    else { continue }
+                    if info.isDirectory {
+                        if depth < 8 {
+                            pending.append((child, item, depth + 1))
+                        }
+                    } else if count < Indexer.maximumEventFiles {
+                        count += 1
+                        records.append(
+                            FileRecord(
+                                origin: .event, path: child, isFolder: false, modified: info.modified,
+                                byteCount: info.byteCount, folder: home.homeFolder, event: home.occurrence))
+                    }
+                }
+            }
+        }
+        return records
+    }
+
     /// Deletes the index of a space that no longer exists.
     public func removeIndex(of container: Container) {
         indexes[container] = nil
@@ -228,9 +454,9 @@ public actor Indexer {
     // MARK: - Private
 
     /// Runs `work` after every pass that was started for the container before it.
-    private func serialized(
-        _ container: Container, _ work: @escaping @Sendable () async throws -> IndexReport
-    ) async throws -> IndexReport {
+    private func serialized<Value: Sendable>(
+        _ container: Container, _ work: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
         let previous = tails[container]
         let task = Task {
             await previous?.value
@@ -253,6 +479,21 @@ public actor Indexer {
             log.error("Replacing a damaged index", private: String(describing: error))
             removeIndex(of: container)
             return try await performRefresh(container)
+        }
+    }
+
+    /// `replacingDamaged(_:_:)` for work that gives something else than a report: after the container has been
+    /// indexed again, `fallback` is returned.
+    private func replacingDamaged<Value: Sendable>(
+        _ container: Container, otherwise fallback: Value, _ work: () async throws -> Value
+    ) async throws -> Value {
+        do {
+            return try await work()
+        } catch let error as SQLiteError where error.isDamagedFile {
+            log.error("Replacing a damaged index", private: String(describing: error))
+            removeIndex(of: container)
+            _ = try await performRefresh(container)
+            return fallback
         }
     }
 
@@ -280,7 +521,8 @@ public actor Indexer {
         try Task.checkCancellation()
     }
 
-    /// Everything in the container's folder: its notes, and its other files and folders.
+    /// Everything in the container's folder: its notes, and its other files and folders, the files in its
+    /// attachments folders included.
     private func walk(_ container: Container) async throws -> (notes: [NoteEntry], files: [FileRecord]) {
         var notes: [NoteEntry] = []
         var files: [FileRecord] = []
@@ -288,7 +530,11 @@ public actor Indexer {
         while let folder = pending.popLast() {
             let listing = try await catalog.listing(of: folder, in: container)
             notes += listing.notes
-            for file in listing.files {
+            var entries = listing.files
+            if let attachments = listing.attachmentsFolder {
+                entries += try await catalog.attachmentFiles(in: attachments, of: container)
+            }
+            for file in entries {
                 files.append(
                     FileRecord(path: file.path, isFolder: false, modified: file.modified, byteCount: file.byteCount))
             }
@@ -374,7 +620,10 @@ public actor Indexer {
                 try index.remove(rowID: state.rowID)
                 report.removed += 1
             }
-            try index.replaceFiles(files)
+            report.filesChanged += try index.syncFiles(files, origin: .folder)
+        }
+        if let assigned = eventFolders {
+            report.filesChanged += try syncEventFiles(container, homes: assigned[container] ?? [])
         }
         return report
     }

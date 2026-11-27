@@ -17,6 +17,11 @@ import Testing
 /// and file count cross every seal, its notes and its files' names never do. The markers are also planted
 /// in events' notes and file names, and everything `CalendarReach` gives is searched the same way.
 ///
+/// Files are read too (the fake extractor): each marker is in a PDF's pages, in a picture in an attachments
+/// folder, and in an event file of the event homed in that marker's space, which is indexed into that space
+/// (`CalendarReach.indexedHomes`). The event without a home has a word of its own, "walrus": its files are
+/// indexed nowhere, so no query may ever return it.
+///
 /// `scripts/check-rules.sh` fails when `Retrieval` or `CalendarReach` has a public query that this file
 /// doesn't call.
 @Suite("Sealing: nothing leaks")
@@ -24,6 +29,8 @@ struct SealingLeakTests {
     static let sealedMarker = "zebrafish"
     static let openMarker = "quokka"
     static let inboxMarker = "axolotl"
+    /// In the file of the event that has no home.
+    static let homelessMarker = "walrus"
 
     private struct Library {
         let fixture: LibraryFixture
@@ -52,7 +59,12 @@ struct SealingLeakTests {
                 in: calendarStore, fixture: fixture, uni: uni, redCross: redCross)
             indexer = fixture.indexer()
             retrieval = fixture.retrieval()
+            // Event files go into their home spaces' indexes, and every file's text is read.
+            await indexer.setEventFolders(
+                await Library.eventFolderHomes(fixture: fixture, store: calendarStore, calendar: calendar))
+            await indexer.setTextExtractor(FakeTextExtractor())
             await indexer.refreshAll()
+            await indexer.readAllFiles()
             // Vectors too: meaning search and related notes must keep the seals like every other query.
             await indexer.setEmbedder(HashingEmbedder())
             await retrieval.setEmbedder(HashingEmbedder())
@@ -89,11 +101,28 @@ struct SealingLeakTests {
                     event("Dentist", nil, location: "Main street", notes: "Ask about the \(openMarker)", hours: 4),
                 ])
             try await store.save(calendar)
-            for (event, marker) in zip(calendar.events, [sealedMarker, openMarker, openMarker]) {
+            let files = [
+                ("\(sealedMarker) rota.pdf", "Rota for the \(sealedMarker) night"),
+                ("\(openMarker) rota.pdf", "Rota for the \(openMarker) lab"),
+                ("Homeless form.pdf", "A \(homelessMarker) questionnaire"),
+            ]
+            for (event, (name, text)) in zip(calendar.events, files) {
                 let folder = try await store.eventFolders.ensureFolder(for: CalendarFixtures.firstOccurrence(of: event))
-                try Data("\(marker) inside".utf8).write(to: folder.appending(component: "\(marker) rota.pdf"))
+                try Data(FakeTextExtractor.pdf(text).utf8).write(to: folder.appending(component: name))
             }
             return calendar
+        }
+
+        /// Where each event folder's files are indexed, as the app works it out.
+        static func eventFolderHomes(
+            fixture: LibraryFixture, store: CalendarStore, calendar: CalendarDocument
+        ) async -> [EventFolderHome] {
+            let calendarReach = CalendarReach(
+                workplace: .everywhere, spaces: await fixture.catalog.spaces(),
+                settings: await fixture.catalog.calendarSettings())
+            return calendarReach.indexedHomes(
+                of: await store.eventFolders.markedFolders(), in: calendar,
+                calendarFolder: LibraryLayout.calendarFolder(in: fixture.root))
         }
 
         /// Everything the calendar shows of its events' content from a workplace, through `CalendarReach`:
@@ -166,7 +195,21 @@ struct SealingLeakTests {
                 "Notes on the \(marker) protocol: call the \(marker) team, text about the protocol.\n",
                 to: "\(folder)/\(marker) protocol notes.md")
             try fixture.write("Same title in every container, by \(marker).\n", to: "\(folder)/Shared title.md")
-            try fixture.write("%PDF", to: "\(folder)/\(marker) drills/\(marker) scan.pdf")
+            try fixture.write(
+                FakeTextExtractor.pdf("The \(marker) inspection checklist", "Page two: \(marker) supplies"),
+                to: "\(folder)/\(marker) drills/\(marker) scan.pdf")
+            try fixture.write(
+                FakeTextExtractor.picture("Triage board for the \(marker) exercise"),
+                to: "\(folder)/\(marker) drills/Attachments/\(marker) whiteboard.png")
+        }
+
+        /// What a hit points at, as text.
+        static func describe(_ item: SearchHit.Item) -> [String] {
+            switch item {
+            case .note(let note): [note.path.description]
+            case .file(_, let path): [path.description]
+            case .eventFile(_, let event, let path): [path.description, event.string]
+            }
         }
 
         var containers: [Container] {
@@ -185,8 +228,16 @@ struct SealingLeakTests {
                     found += [hit.title, hit.preview, hit.note.path.description]
                 }
             }
-            let markers = [SealingLeakTests.sealedMarker, SealingLeakTests.openMarker, SealingLeakTests.inboxMarker]
-            for text in markers + ["", "roster", "plan", "protocol", "drills", "shared", "scan", "heading", "team"] {
+            let markers = [
+                SealingLeakTests.sealedMarker, SealingLeakTests.openMarker, SealingLeakTests.inboxMarker,
+                SealingLeakTests.homelessMarker,
+            ]
+            let words = [
+                "", "roster", "plan", "protocol", "drills", "shared", "scan", "heading", "team", "inspection",
+                "checklist", "supplies", "triage", "exercise", "whiteboard", "rota", "night", "lab", "homeless",
+                "questionnaire", "form",
+            ]
+            for text in markers + words {
                 for query in [
                     SearchQuery(text: text, limit: 200),
                     SearchQuery(text: text, space: redCross.id, limit: 200),
@@ -199,11 +250,7 @@ struct SealingLeakTests {
                     for hit in try await retrieval.search(query, from: workplace)
                         + (try await retrieval.searchByMeaning(query, from: workplace))
                     {
-                        found += [hit.title, hit.snippet.text]
-                        switch hit.item {
-                        case .note(let note): found.append(note.path.description)
-                        case .file(_, let path): found.append(path.description)
-                        }
+                        found += [hit.title, hit.snippet.text] + Library.describe(hit.item)
                     }
                 }
                 add(try await retrieval.titles(matching: text, from: workplace, limit: 200))
@@ -268,7 +315,7 @@ struct SealingLeakTests {
                 ).map(\.path.description)
                 found += try await retrieval.attachmentNamesShared(by: note, from: workplace)
                 for hit in try await retrieval.related(to: note, from: workplace, limit: 50) {
-                    found += [hit.title, hit.preview, hit.note.path.description]
+                    found += [hit.title, hit.snippet.text] + Library.describe(hit.item)
                 }
                 if let hit = try await retrieval.note(note, from: workplace) {
                     found += [hit.title, hit.preview]
@@ -320,6 +367,13 @@ struct SealingLeakTests {
         #expect(inside.contains("call the zebrafish team"))
         #expect(inside.contains("zebrafish scan.pdf"))
         #expect(inside.contains("zebrafish drills"))
+        // Its files' text: a PDF's pages, a picture in an attachments folder, and its event's file.
+        #expect(inside.contains("the zebrafish inspection checklist"))
+        #expect(inside.contains("page two: zebrafish supplies"))
+        #expect(inside.contains("triage board for the zebrafish exercise"))
+        #expect(inside.contains("zebrafish whiteboard.png"))
+        #expect(inside.contains("rota for the zebrafish night"))
+        #expect(inside.contains("zebrafish rota.pdf"))
     }
 
     @Test("Nothing from outside comes out inside the sealed space")
@@ -329,6 +383,7 @@ struct SealingLeakTests {
         let inside = try await library.everything(from: .space(library.redCross.id))
         #expect(!inside.contains(Self.openMarker))
         #expect(!inside.contains(Self.inboxMarker))
+        #expect(!inside.contains(Self.homelessMarker))
         #expect(!inside.contains("curious"))
     }
 
@@ -340,8 +395,12 @@ struct SealingLeakTests {
             let text = try await library.everything(from: workplace)
             #expect(text.contains("quokka roster"))
             #expect(text.contains("quokka scan.pdf"))
+            #expect(text.contains("the quokka inspection checklist"))
+            #expect(text.contains("triage board for the quokka exercise"))
+            #expect(text.contains("rota for the quokka lab"))
             #expect(text.contains("curious"))
             #expect(!text.contains(Self.inboxMarker), "the Inbox leaked to \(workplace)")
+            #expect(!text.contains(Self.homelessMarker))
         }
     }
 
@@ -352,8 +411,12 @@ struct SealingLeakTests {
         let text = try await library.everything(from: .inbox)
         #expect(text.contains("axolotl roster"))
         #expect(text.contains("axolotl scan.pdf"))
+        #expect(text.contains("the axolotl inspection checklist"))
+        #expect(text.contains("triage board for the axolotl exercise"))
         #expect(!text.contains(Self.openMarker))
         #expect(!text.contains(Self.sealedMarker))
+        #expect(!text.contains(Self.homelessMarker))
+        #expect(!text.contains("rota"))
         #expect(!text.contains("curious"))
     }
 
@@ -542,8 +605,8 @@ struct SealingLeakTests {
             let text = await library.calendarContent(from: workplace)
             #expect(!text.contains(Self.sealedMarker), "the sealed marker leaked to \(workplace)")
             #expect(!text.contains("found night shift by brief"))
-            // Nor do event files ever reach the index, from anywhere, in 0.2.
-            #expect(try await !library.everything(from: workplace).contains("rota"))
+            // The event without a home has its files indexed nowhere.
+            #expect(try await !library.everything(from: workplace).contains(Self.homelessMarker))
         }
         let inside = await library.calendarContent(from: .space(library.redCross.id))
         #expect(inside.contains("brief the zebrafish team"))
@@ -637,11 +700,71 @@ struct SealingLeakTests {
         let open = library.roster(Self.openMarker, in: .space(library.uni.id))
         let fromUni = try await library.retrieval.related(to: open, from: .space(library.uni.id), limit: 10)
         #expect(fromUni.map(\.title).contains("\(Self.openMarker) protocol notes"))
-        #expect(!fromUni.contains { $0.title.contains(Self.sealedMarker) || $0.preview.contains(Self.sealedMarker) })
+        #expect(
+            !fromUni.contains {
+                $0.title.contains(Self.sealedMarker) || $0.snippet.text.contains(Self.sealedMarker)
+            })
         let query = SearchQuery(text: "protocol team notes", limit: 50)
         let found = try await library.retrieval.searchByMeaning(query, from: .everywhere)
         #expect(found.map(\.title).contains("\(Self.openMarker) protocol notes"))
         #expect(!found.contains { $0.title.contains(Self.sealedMarker) || $0.snippet.text.contains(Self.sealedMarker) })
+    }
+
+    @Test("Event files are indexed into their home space only, and nowhere without a usable home")
+    func eventFilesGoHome() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let homes = await Library.eventFolderHomes(
+            fixture: library.fixture, store: library.calendarStore, calendar: library.calendar)
+        let shift = try #require(library.calendar.events.first { $0.title == "Night shift" })
+        let physics = try #require(library.calendar.events.first { $0.title == "Physics" })
+        let homed: Set<UUID> = Set(homes.map(\.occurrence.eventID))
+        #expect(homed == [shift.id, physics.id])
+        #expect(homes.count == 2)
+        let shiftHome = homes.first { $0.occurrence.eventID == shift.id }
+        let physicsHome = homes.first { $0.occurrence.eventID == physics.id }
+        #expect(shiftHome?.space == library.redCross.id)
+        #expect(physicsHome?.space == library.uni.id)
+        #expect(physicsHome?.homeFolder == ItemPath("Lectures"))
+
+        // Settings that can't be read, or a home whose space is gone, put event files nowhere: the space may
+        // have been sealed.
+        let folders = await library.calendarStore.eventFolders.markedFolders()
+        let calendarFolder = LibraryLayout.calendarFolder(in: library.fixture.root)
+        let damaged = CalendarReach(
+            workplace: .everywhere, spaces: await library.fixture.catalog.spaces(),
+            settings: CalendarSettings(from: ["calendar": .object(["homes": .array([])])]))
+        #expect(damaged.indexedHomes(of: folders, in: library.calendar, calendarFolder: calendarFolder).isEmpty)
+        let withoutRedCross = CalendarReach(
+            workplace: .everywhere,
+            spaces: await library.fixture.catalog.spaces().filter { $0.id != library.redCross.id },
+            settings: await library.fixture.catalog.calendarSettings())
+        #expect(
+            withoutRedCross.indexedHomes(of: folders, in: library.calendar, calendarFolder: calendarFolder).map(
+                \.space) == [library.uni.id])
+    }
+
+    @Test("An event whose home moves into a sealed space takes its files out of the open one")
+    func eventFilesFollowTheirHomeIntoTheSeal() async throws {
+        let library = try await Library()
+        defer { library.fixture.remove() }
+        let lectures = try #require(library.calendar.subjects.first { $0.name == "Lectures" })
+        var settings = await library.fixture.catalog.calendarSettings()
+        settings.setHome(SubjectHome(space: library.redCross.id), forSubject: lectures.id)
+        try await library.fixture.catalog.saveCalendarSettings(settings)
+        await library.indexer.setEventFolders(
+            await Library.eventFolderHomes(
+                fixture: library.fixture, store: library.calendarStore, calendar: library.calendar))
+        // At once, before anything is read again: nothing of the lecture's file is found outside any more.
+        for workplace: Workplace in [.everywhere, .space(library.uni.id), .space(library.ideas.id)] {
+            let text = try await library.everything(from: workplace)
+            #expect(!text.contains("quokka rota.pdf"), "\(workplace)")
+            #expect(!text.contains("rota for the quokka lab"), "\(workplace)")
+        }
+        await library.indexer.readAllFiles()
+        let inside = try await library.everything(from: .space(library.redCross.id))
+        #expect(inside.contains("rota for the quokka lab"))
+        #expect(try await !library.everything(from: .everywhere).contains("rota for the quokka lab"))
     }
 
     @Test("A space whose settings can't be read counts as sealed")

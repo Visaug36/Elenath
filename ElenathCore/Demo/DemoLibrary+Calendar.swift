@@ -1,5 +1,11 @@
 import Foundation
 
+#if canImport(CoreText) && canImport(ImageIO)
+    import CoreGraphics
+    import CoreText
+    import ImageIO
+#endif
+
 /// The demo library's calendar: Ithil's sample week (`DemoCalendar`) with each subject homed in a space,
 /// a Red Cross subject whose events are sealed, a few event files and a note for one lecture. And a
 /// separate Ithil folder to try "Bring in my Ithil calendar" with. Everything in it is invented.
@@ -172,22 +178,50 @@ private struct DemoWeek {
     }
 }
 
-/// Small invented files for the demo's event folders.
+/// Small invented files for the demo's event folders and attachments.
 enum DemoFiles {
-    /// A one-page PDF that shows `text`, built by hand (no PDF library is needed for one line of text).
+    /// The formula sheet beside the Physics notes: two pages of text.
+    static var formulaSheet: Data {
+        pdf(pages: [
+            [
+                "Formula sheet - rotation", "Torque: tau = r x F", "Angular momentum: L = I w",
+                "Rotational energy: E = I w^2 / 2",
+            ],
+            [
+                "Moments of inertia", "Rod about its centre: I = m L^2 / 12", "Hoop: I = m R^2",
+                "Solid disc: I = m R^2 / 2",
+            ],
+        ])
+    }
+
+    /// The photo of the whiteboard in a lecture's attachments.
+    static let whiteboardName = "Whiteboard - torque.png"
+    static let whiteboardLines = ["Torque on a wrench", "tau = r F sin(theta)", "A longer handle needs less force"]
+
+    /// A one-page PDF that shows `text`.
     static func pdf(text: String) -> Data {
-        let escaped = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "(", with: "\\(")
-            .replacingOccurrences(of: ")", with: "\\)")
-        let ascii = String(escaped.unicodeScalars.map { $0.isASCII ? Character($0) : "-" })
-        let stream = "BT /F1 18 Tf 72 720 Td (\(ascii)) Tj ET"
-        let objects = [
+        pdf(pages: [[text]])
+    }
+
+    /// A PDF of text pages in Helvetica, each page's lines from the top, built by hand: no PDF library is
+    /// needed for a few lines of text, and PDFKit reads them back as text. Characters outside ASCII become "-".
+    static func pdf(pages: [[String]]) -> Data {
+        let pageCount = max(pages.count, 1)
+        let font = 3 + 2 * pageCount
+        let kids = (0..<pageCount).map { "\(3 + 2 * $0) 0 R" }.joined(separator: " ")
+        var objects = [
             "<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-                + "/Resources << /Font << /F1 5 0 R >> >> >>",
-            "<< /Length \(stream.utf8.count) >>\nstream\n\(stream)\nendstream",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            "<< /Type /Pages /Kids [\(kids)] /Count \(pageCount) >>",
         ]
+        for (index, lines) in (pages.isEmpty ? [[]] : pages).enumerated() {
+            let shown = lines.map { "(\(escaped($0))) Tj T*" }.joined(separator: " ")
+            let stream = "BT /F1 18 Tf 24 TL 72 720 Td \(shown) ET"
+            objects.append(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents \(4 + 2 * index) 0 R "
+                    + "/Resources << /Font << /F1 \(font) 0 R >> >> >>")
+            objects.append("<< /Length \(stream.utf8.count) >>\nstream\n\(stream)\nendstream")
+        }
+        objects.append("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
         var output = "%PDF-1.4\n"
         var offsets: [Int] = []
         for (index, object) in objects.enumerated() {
@@ -201,5 +235,52 @@ enum DemoFiles {
         }
         output += "trailer\n<< /Size \(objects.count + 1) /Root 1 0 R >>\nstartxref\n\(xref)\n%%EOF\n"
         return Data(output.utf8)
+    }
+
+    /// A line as a PDF string: backslashes and parentheses escaped, anything but ASCII as "-".
+    private static func escaped(_ line: String) -> String {
+        let ascii = String(line.unicodeScalars.map { $0.isASCII && $0.value >= 0x20 ? Character($0) : "-" })
+        return ascii.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+    }
+}
+
+extension DemoFiles {
+    /// A picture of a whiteboard: dark lines of text on off-white, as PNG. Nil where Core Text isn't there to
+    /// draw it (Linux), so the demo has no picture there.
+    static func picture(lines: [String]) -> Data? {
+        #if canImport(CoreText) && canImport(ImageIO)
+            let width = 1_600
+            let height = max(400, 220 + lines.count * 110)
+            guard
+                let context = CGContext(
+                    data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            else { return nil }
+            context.setFillColor(red: 0.97, green: 0.97, blue: 0.95, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            context.setFillColor(red: 0.08, green: 0.12, blue: 0.32, alpha: 1)
+            let font = CTFontCreateWithName("Helvetica" as CFString, 64, nil)
+            let attributes: [CFString: Any] = [
+                kCTFontAttributeName: font, kCTForegroundColorFromContextAttributeName: true,
+            ]
+            for (index, line) in lines.enumerated() {
+                guard let text = CFAttributedStringCreate(nil, line as CFString, attributes as CFDictionary) else {
+                    continue
+                }
+                context.textPosition = CGPoint(x: 90, y: height - 150 - index * 110)
+                CTLineDraw(CTLineCreateWithAttributedString(text), context)
+            }
+            guard let image = context.makeImage() else { return nil }
+            let data = NSMutableData()
+            guard
+                let destination = CGImageDestinationCreateWithData(
+                    data as CFMutableData, "public.png" as CFString, 1, nil)
+            else { return nil }
+            CGImageDestinationAddImage(destination, image, nil)
+            return CGImageDestinationFinalize(destination) ? data as Data : nil
+        #else
+            return nil
+        #endif
     }
 }

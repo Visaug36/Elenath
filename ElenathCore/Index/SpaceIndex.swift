@@ -118,15 +118,77 @@ struct NoteRecord: Sendable {
     }
 }
 
+/// Where a file row's file is.
+enum FileOrigin: Int64, Sendable {
+    /// In the container's folder, attachments included; the path is relative to that folder.
+    case folder = 0
+    /// In an event folder, indexed into its event's home space; the path is relative to the calendar folder.
+    case event = 1
+}
+
 /// A file that isn't a note, or a folder.
 struct FileRecord: Hashable, Sendable {
+    var origin: FileOrigin = .folder
     var path: ItemPath
     var isFolder: Bool
     var modified: Date?
     var byteCount: Int64
+    /// Where a search narrowed to a folder finds it: the folder it is in, or an event file's home folder.
+    var folder: ItemPath
+    /// An event file's occurrence.
+    var event: EventLink?
+
+    init(
+        origin: FileOrigin = .folder, path: ItemPath, isFolder: Bool, modified: Date?, byteCount: Int64,
+        folder: ItemPath? = nil, event: EventLink? = nil
+    ) {
+        self.origin = origin
+        self.path = path
+        self.isFolder = isFolder
+        self.modified = modified
+        self.byteCount = byteCount
+        self.folder = folder ?? path.folder
+        self.event = event
+    }
 }
 
-/// What the indexer needs to tell whether a note file changed, without reading it.
+/// What became of a file's text. A row without one is waiting to be read.
+enum FileTextState: Int64, Sendable {
+    case read = 1
+    /// Nothing to read: no text in it, or not a kind of file whose text is read.
+    case none = 2
+    /// Couldn't be read: broken, locked, too slow, or its reading never finished.
+    case failed = 3
+}
+
+/// A file whose text is waiting to be read.
+struct FileToRead: Hashable, Sendable {
+    var id: Int64
+    var origin: FileOrigin
+    var path: ItemPath
+    var kind: FileTextKind
+    var byteCount: Int64
+    var modified: Date?
+}
+
+/// A file as a query returns it.
+struct IndexedFileRow: Hashable, Sendable {
+    var id: Int64
+    var origin: FileOrigin
+    var path: ItemPath
+    var event: EventLink?
+    var modified: Date?
+}
+
+struct IndexedFileSearchRow: Sendable {
+    var file: IndexedFileRow
+    /// The PDF page that matched.
+    var page: Int?
+    /// With U+0002 before and U+0003 after each matched word, or the page's text for a substring match.
+    var markedSnippet: String
+    var rank: Double
+}
+
 /// A chunk waiting for its vector, with the text the embedder reads.
 struct PendingChunk: Sendable {
     var id: Int64
@@ -139,12 +201,14 @@ struct ChunkVector: Sendable {
     var chunk: Int64
     /// The note it is from, or nil for a file's chunk.
     var note: Int64?
-    var fileKey: String?
+    /// The file it is from, or nil for a note's chunk.
+    var file: Int64?
     var page: Int?
     var range: NSRange
     var vector: [Float]
 }
 
+/// What the indexer needs to tell whether a note file changed, without reading it.
 struct IndexedNoteState: Sendable {
     var rowID: Int64
     var path: ItemPath
@@ -201,7 +265,7 @@ struct IndexFilter: Sendable {
 /// `Reach` which databases a question may read.
 final class SpaceIndex {
     /// A database written with another version is emptied and filled again.
-    static let schemaVersion: Int64 = 4
+    static let schemaVersion: Int64 = 5
 
     let container: Container
     private let database: SQLiteDatabase
@@ -241,13 +305,19 @@ final class SpaceIndex {
             if version == SpaceIndex.schemaVersion {
                 return
             }
-            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram", "chunks", "meta"] {
+            for table in SpaceIndex.tables {
                 try database.execute("DROP TABLE IF EXISTS \(table)")
             }
             try database.execute(SpaceIndex.schema)
             try database.execute("PRAGMA user_version = \(SpaceIndex.schemaVersion)")
         }
     }
+
+    /// Every table, for dropping and emptying.
+    private static let tables = [
+        "notes", "links", "tags", "tasks", "files", "file_pages", "note_text", "note_trigram", "file_text",
+        "file_trigram", "chunks", "meta",
+    ]
 
     private static let schema = """
         CREATE TABLE notes (
@@ -301,17 +371,32 @@ final class SpaceIndex {
         );
         CREATE INDEX tasks_note ON tasks(note);
         CREATE TABLE files (
+            id INTEGER PRIMARY KEY,
+            origin INTEGER NOT NULL,
             path TEXT NOT NULL,
-            path_key TEXT NOT NULL PRIMARY KEY,
+            path_key TEXT NOT NULL,
             name_key TEXT NOT NULL,
+            folder_key TEXT NOT NULL,
             is_folder INTEGER NOT NULL,
             modified REAL,
-            byte_count INTEGER NOT NULL
-        ) WITHOUT ROWID;
+            byte_count INTEGER NOT NULL,
+            event TEXT,
+            text_state INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (origin, path_key)
+        );
+        CREATE INDEX files_folder ON files(folder_key);
+        CREATE INDEX files_waiting ON files(text_state, attempts);
+        CREATE TABLE file_pages (
+            id INTEGER PRIMARY KEY,
+            file INTEGER NOT NULL,
+            page INTEGER
+        );
+        CREATE INDEX file_pages_file ON file_pages(file);
         CREATE TABLE chunks (
             id INTEGER PRIMARY KEY,
             note INTEGER,
-            file_key TEXT,
+            file INTEGER,
             page INTEGER,
             location INTEGER NOT NULL,
             length INTEGER NOT NULL,
@@ -322,7 +407,7 @@ final class SpaceIndex {
             vector BLOB
         );
         CREATE INDEX chunks_note ON chunks(note);
-        CREATE INDEX chunks_file ON chunks(file_key);
+        CREATE INDEX chunks_file ON chunks(file);
         CREATE INDEX chunks_model ON chunks(model);
         CREATE TABLE meta (
             key TEXT PRIMARY KEY,
@@ -331,6 +416,9 @@ final class SpaceIndex {
         CREATE VIRTUAL TABLE note_text USING fts5(title, body, tags, tokenize = "unicode61 remove_diacritics 2");
         CREATE VIRTUAL TABLE note_trigram USING fts5(
             title, body, tokenize = 'trigram', content = '', contentless_delete = 1);
+        CREATE VIRTUAL TABLE file_text USING fts5(body, tokenize = "unicode61 remove_diacritics 2");
+        CREATE VIRTUAL TABLE file_trigram USING fts5(
+            body, tokenize = 'trigram', content = '', contentless_delete = 1);
         """
 
     // MARK: - Writing (the indexer)
@@ -449,7 +537,7 @@ final class SpaceIndex {
         for chunk in chunks {
             try database.run(
                 """
-                INSERT INTO chunks (note, file_key, page, location, length, headings, text, script, model, vector)
+                INSERT INTO chunks (note, file, page, location, length, headings, text, script, model, vector)
                 VALUES (?, NULL, ?, ?, ?, ?, ?, ?, NULL, NULL)
                 """,
                 [
@@ -535,12 +623,12 @@ final class SpaceIndex {
     /// Every vector a model made, with where its chunk is: what meaning search compares a question with.
     func chunkVectors(model: EmbedderStamp, dimension: Int) throws -> [ChunkVector] {
         try database.query(
-            "SELECT id, note, file_key, page, location, length, vector FROM chunks WHERE model = ? AND length(vector) = ?",
+            "SELECT id, note, file, page, location, length, vector FROM chunks WHERE model = ? AND length(vector) = ?",
             [.text(model.key), .integer(Int64(dimension * 4))]
         ) { row -> ChunkVector? in
             guard let data = row.blob(6), let vector = VectorMath.decode(data, dimension: dimension) else { return nil }
             return ChunkVector(
-                chunk: row.int(0), note: row.optionalInt(1), fileKey: row.text(2),
+                chunk: row.int(0), note: row.optionalInt(1), file: row.optionalInt(2),
                 page: row.optionalInt(3).map(Int.init),
                 range: NSRange(location: Int(row.int(4)), length: Int(row.int(5))), vector: vector)
         }.compactMap { $0 }
@@ -579,24 +667,245 @@ final class SpaceIndex {
         try database.run("DELETE FROM tasks WHERE note = ?", [id])
     }
 
-    /// Replaces what is known about the files that aren't notes, and the folders.
-    func replaceFiles(_ files: [FileRecord]) throws {
-        try database.run("DELETE FROM files")
+    // MARK: - Files
+
+    /// Brings the rows of one origin in step with `files`: what is new is added, to be read; what changed size
+    /// or date has its text thrown away, to be read again; what is gone is removed with its text. A file that
+    /// only moved to another home folder, or whose name changed case, keeps its text. Returns how many rows
+    /// changed.
+    @discardableResult
+    func syncFiles(_ files: [FileRecord], origin: FileOrigin) throws -> Int {
+        var known: [String: KnownFile] = [:]
+        for (pathKey, file) in try database.query(
+            "SELECT path_key, id, path, byte_count, modified, folder_key, event FROM files WHERE origin = ?",
+            [.integer(origin.rawValue)],
+            { row in
+                (
+                    row.string(0),
+                    KnownFile(
+                        id: row.int(1), path: row.string(2), byteCount: row.int(3), modified: row.date(4),
+                        folderKey: row.string(5), event: row.text(6))
+                )
+            })
+        {
+            known[pathKey] = file
+        }
+        var changed = 0
+        var seen = Set<String>()
         for file in files {
+            let pathKey = NameSanitizer.key(file.path.description)
+            // Two names that differ only in case are one file to a Mac's disk: the first stays.
+            guard seen.insert(pathKey).inserted else { continue }
+            let folderKey = NameSanitizer.key(file.folder.description)
+            let state = SpaceIndex.initialTextState(of: file)
+            if let existing = known[pathKey] {
+                if existing.byteCount == file.byteCount && SpaceIndex.sameMoment(existing.modified, file.modified) {
+                    guard
+                        existing.path != file.path.description || existing.folderKey != folderKey
+                            || existing.event != file.event?.string
+                    else { continue }
+                    try database.run(
+                        "UPDATE files SET path = ?, name_key = ?, folder_key = ?, event = ? WHERE id = ?",
+                        [
+                            .text(file.path.description), .text(NameSanitizer.key(file.path.name)),
+                            .text(folderKey), .optional(file.event?.string), .integer(existing.id),
+                        ])
+                } else {
+                    try removeText(ofFile: existing.id)
+                    try database.run(
+                        """
+                        UPDATE files SET path = ?, name_key = ?, folder_key = ?, event = ?, modified = ?, byte_count = ?,
+                            text_state = ?, attempts = 0 WHERE id = ?
+                        """,
+                        [
+                            .text(file.path.description), .text(NameSanitizer.key(file.path.name)),
+                            .text(folderKey), .optional(file.event?.string),
+                            .optional(file.modified?.timeIntervalSince1970), .integer(file.byteCount),
+                            .optional(state?.rawValue), .integer(existing.id),
+                        ])
+                }
+            } else {
+                try database.run(
+                    """
+                    INSERT INTO files (origin, path, path_key, name_key, folder_key, is_folder, modified, byte_count,
+                        event, text_state, attempts)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    [
+                        .integer(origin.rawValue), .text(file.path.description), .text(pathKey),
+                        .text(NameSanitizer.key(file.path.name)), .text(folderKey), .bool(file.isFolder),
+                        .optional(file.modified?.timeIntervalSince1970), .integer(file.byteCount),
+                        .optional(file.event?.string), .optional(state?.rawValue),
+                    ])
+            }
+            changed += 1
+        }
+        for (pathKey, existing) in known where !seen.contains(pathKey) {
+            try removeText(ofFile: existing.id)
+            try database.run("DELETE FROM files WHERE id = ?", [.integer(existing.id)])
+            changed += 1
+        }
+        return changed
+    }
+
+    private struct KnownFile {
+        var id: Int64
+        var path: String
+        var byteCount: Int64
+        var modified: Date?
+        var folderKey: String
+        var event: String?
+    }
+
+    /// Removes the event files of every occurrence but those in `kept` (`EventLink.string`), with their text:
+    /// what leaves a space when an event's home changes, before anything is added elsewhere.
+    @discardableResult
+    func removeEventFiles(keeping kept: Set<String>) throws -> Int {
+        let rows = try database.query(
+            "SELECT id, event FROM files WHERE origin = ?", [.integer(FileOrigin.event.rawValue)]
+        ) { ($0.int(0), $0.text(1)) }
+        var removed = 0
+        for (id, event) in rows where !(event.map(kept.contains) ?? false) {
+            try removeText(ofFile: id)
+            try database.run("DELETE FROM files WHERE id = ?", [.integer(id)])
+            removed += 1
+        }
+        return removed
+    }
+
+    /// The occurrences this index holds event files of (`EventLink.string`).
+    func eventFileOccurrences() throws -> Set<String> {
+        Set(
+            try database.query(
+                "SELECT DISTINCT event FROM files WHERE origin = ? AND event IS NOT NULL",
+                [.integer(FileOrigin.event.rawValue)]
+            ) { $0.string(0) })
+    }
+
+    /// The state a new or changed file's text starts in: nil (to be read) for a file whose text is read.
+    private static func initialTextState(of file: FileRecord) -> FileTextState? {
+        file.isFolder || FileTextKind(fileName: file.path.name) == nil ? FileTextState.none : nil
+    }
+
+    private static func sameMoment(_ first: Date?, _ second: Date?) -> Bool {
+        switch (first, second) {
+        case (nil, nil): true
+        case (let first?, let second?): abs(first.timeIntervalSince(second)) < 0.001
+        default: false
+        }
+    }
+
+    /// The next file after `cursor` whose text waits to be read, the oldest row first. A file whose reading was started
+    /// `FileTextLimits.maximumAttempts` times without finishing is marked as failed instead.
+    func nextFileToRead(after cursor: Int64 = 0) throws -> FileToRead? {
+        let attempts = SQLiteValue.integer(Int64(FileTextLimits.maximumAttempts))
+        try database.run(
+            "UPDATE files SET text_state = ? WHERE text_state IS NULL AND attempts >= ?",
+            [.integer(FileTextState.failed.rawValue), attempts])
+        while true {
+            let found = try database.first(
+                """
+                SELECT id, origin, path, byte_count, modified FROM files
+                WHERE text_state IS NULL AND attempts < ? AND is_folder = 0 AND id > ? ORDER BY id LIMIT 1
+                """, [attempts, .integer(cursor)]
+            ) { row in
+                (
+                    id: row.int(0), origin: FileOrigin(rawValue: row.int(1)), path: ItemPath(row.string(2)),
+                    byteCount: row.int(3), modified: row.date(4)
+                )
+            }
+            guard let found else { return nil }
+            if let origin = found.origin, let path = found.path, let kind = FileTextKind(fileName: path.name) {
+                return FileToRead(
+                    id: found.id, origin: origin, path: path, kind: kind, byteCount: found.byteCount,
+                    modified: found.modified)
+            }
             try database.run(
-                "INSERT OR REPLACE INTO files (path, path_key, name_key, is_folder, modified, byte_count) VALUES (?, ?, ?, ?, ?, ?)",
+                "UPDATE files SET text_state = ? WHERE id = ?",
+                [.integer(FileTextState.none.rawValue), .integer(found.id)])
+        }
+    }
+
+    /// Counts a reading as started, before it starts: one that never finishes (a crash, a quit) still counts.
+    func startReading(_ file: FileToRead) throws {
+        try database.run("UPDATE files SET attempts = attempts + 1 WHERE id = ?", [.integer(file.id)])
+    }
+
+    /// Stores what was read of a file, with its chunks, or, for nil, that it couldn't be read. False when the
+    /// file changed or left since its reading began: what was read is then thrown away.
+    @discardableResult
+    func finishReading(_ file: FileToRead, text: ExtractedText?) throws -> Bool {
+        let current = try database.first(
+            "SELECT byte_count, modified FROM files WHERE id = ? AND text_state IS NULL", [.integer(file.id)]
+        ) { (byteCount: $0.int(0), modified: $0.date(1)) }
+        guard let current, current.byteCount == file.byteCount,
+            SpaceIndex.sameMoment(current.modified, file.modified)
+        else { return false }
+        try removeText(ofFile: file.id)
+        let state: FileTextState
+        if let text, text.hasText {
+            state = .read
+            try storeText(text, ofFile: file.id)
+        } else {
+            state = text == nil ? .failed : .none
+        }
+        try database.run(
+            "UPDATE files SET text_state = ?, attempts = 0 WHERE id = ?",
+            [.integer(state.rawValue), .integer(file.id)])
+        return true
+    }
+
+    private func storeText(_ text: ExtractedText, ofFile id: Int64) throws {
+        let file = SQLiteValue.integer(id)
+        for (index, page) in text.pages.enumerated() where page.contains(where: { !$0.isWhitespace }) {
+            let number: SQLiteValue = text.isPaged ? .integer(Int64(index + 1)) : .null
+            try database.run("INSERT INTO file_pages (file, page) VALUES (?, ?)", [file, number])
+            let pageRow = SQLiteValue.integer(database.lastInsertedRowID)
+            try database.run("INSERT INTO file_text (rowid, body) VALUES (?, ?)", [pageRow, .text(page)])
+            try database.run("INSERT INTO file_trigram (rowid, body) VALUES (?, ?)", [pageRow, .text(page)])
+        }
+        for chunk in Chunker.chunks(ofPages: text.pages) {
+            let page: SQLiteValue = text.isPaged ? .optional(chunk.page.map(Int64.init)) : .null
+            try database.run(
+                """
+                INSERT INTO chunks (note, file, page, location, length, headings, text, script, model, vector)
+                VALUES (NULL, ?, ?, ?, ?, '', ?, ?, NULL, NULL)
+                """,
                 [
-                    .text(file.path.description), .text(NameSanitizer.key(file.path.description)),
-                    .text(NameSanitizer.key(file.path.name)), .bool(file.isFolder),
-                    .optional(file.modified?.timeIntervalSince1970), .integer(file.byteCount),
+                    file, page, .integer(Int64(chunk.range.location)), .integer(Int64(chunk.range.length)),
+                    .text(chunk.text), .optional(Script.dominant(in: chunk.text)),
                 ])
         }
+        try bumpChunksVersion()
+    }
+
+    /// Removes a file's pages and chunks.
+    private func removeText(ofFile id: Int64) throws {
+        let file = SQLiteValue.integer(id)
+        for page in try database.query("SELECT id FROM file_pages WHERE file = ?", [file], { $0.int(0) }) {
+            try database.run("DELETE FROM file_text WHERE rowid = ?", [.integer(page)])
+            try database.run("DELETE FROM file_trigram WHERE rowid = ?", [.integer(page)])
+        }
+        try database.run("DELETE FROM file_pages WHERE file = ?", [file])
+        if try database.first("SELECT count(*) FROM chunks WHERE file = ?", [file], { $0.int(0) }) ?? 0 > 0 {
+            try database.run("DELETE FROM chunks WHERE file = ?", [file])
+            try bumpChunksVersion()
+        }
+    }
+
+    /// How many files wait to be read.
+    func filesWaiting() throws -> Int {
+        let count = try database.first(
+            "SELECT count(*) FROM files WHERE text_state IS NULL AND attempts < ?",
+            [.integer(Int64(FileTextLimits.maximumAttempts))]
+        ) { $0.int(0) }
+        return Int(count ?? 0)
     }
 
     /// Empties the index. It fills again from the folder.
     func clear() throws {
         try database.transaction {
-            for table in ["notes", "links", "tags", "tasks", "files", "note_text", "note_trigram", "chunks", "meta"] {
+            for table in SpaceIndex.tables {
                 try database.run("DELETE FROM \(table)")
             }
         }
@@ -885,27 +1194,167 @@ final class SpaceIndex {
 
     /// The folders of the container, by path.
     func folders() throws -> [ItemPath] {
-        try database.query("SELECT path FROM files WHERE is_folder = 1 ORDER BY path_key") { ItemPath($0.string(0)) }
-            .compactMap { $0 }
+        try database.query(
+            "SELECT path FROM files WHERE is_folder = 1 AND origin = ? ORDER BY path_key",
+            [.integer(FileOrigin.folder.rawValue)]
+        ) { ItemPath($0.string(0)) }.compactMap { $0 }
     }
 
-    /// Files that aren't notes whose name contains every one of `termKeys`.
-    func files(named termKeys: [String], limit: Int) throws -> [FileRecord] {
-        guard !termKeys.isEmpty else { return [] }
-        let contains = termKeys.map { _ in "instr(name_key, ?) > 0" }.joined(separator: " AND ")
-        return try database.query(
-            "SELECT path, modified, byte_count FROM files WHERE is_folder = 0 AND \(contains) ORDER BY modified DESC LIMIT ?",
-            termKeys.map { SQLiteValue.text($0) } + [.integer(Int64(limit))]
-        ) { row in
-            FileRecord(
-                path: ItemPath(row.string(0)) ?? .root, isFolder: false, modified: row.date(1), byteCount: row.int(2))
+    // MARK: - Reading files (retrieval)
+
+    private static let fileColumns = "f.id, f.origin, f.path, f.event, f.modified"
+
+    /// A file row from `fileColumns`, starting at `column`.
+    private static func fileRow(_ row: SQLiteRow, from column: Int32 = 0) -> IndexedFileRow? {
+        guard let origin = FileOrigin(rawValue: row.int(column + 1)), let path = ItemPath(row.string(column + 2))
+        else { return nil }
+        return IndexedFileRow(
+            id: row.int(column), origin: origin, path: path,
+            event: row.text(column + 3).flatMap(EventLink.init(string:)), modified: row.date(column + 4))
+    }
+
+    /// The SQL conditions of a filter on the `files` table as `f`, or nil when the filter leaves files out: a
+    /// tag, a kind or an event narrows the search to notes.
+    private static func fileConditions(for filter: IndexFilter) -> (sql: [String], values: [SQLiteValue])? {
+        guard filter.tag == nil, filter.kind == nil, filter.event == nil else { return nil }
+        var sql = ["f.is_folder = 0"]
+        var values: [SQLiteValue] = []
+        if let folder = filter.folder, !folder.isRoot {
+            let key = NameSanitizer.key(folder.description)
+            let prefix = key + "/"
+            sql.append("(f.folder_key = ? OR substr(f.folder_key, 1, ?) = ?)")
+            values += [.text(key), .integer(Int64(prefix.unicodeScalars.count)), .text(prefix)]
         }
+        if let after = filter.modifiedAfter {
+            sql.append("f.modified >= ?")
+            values.append(.real(after.timeIntervalSince1970))
+        }
+        if let before = filter.modifiedBefore {
+            sql.append("f.modified < ?")
+            values.append(.real(before.timeIntervalSince1970))
+        }
+        return (sql, values)
+    }
+
+    /// Files with a page that has every word of `match` (an FTS5 query), the best page of each, best first.
+    func searchFiles(match: String, filter: IndexFilter, limit: Int) throws -> [IndexedFileSearchRow] {
+        guard let (conditions, values) = SpaceIndex.fileConditions(for: filter) else { return [] }
+        let sql = """
+            SELECT \(SpaceIndex.fileColumns), p.page, snippet(file_text, 0, char(2), char(3), '…', 18),
+                bm25(file_text) AS rank
+            FROM file_text JOIN file_pages p ON p.id = file_text.rowid JOIN files f ON f.id = p.file
+            WHERE file_text MATCH ? AND \(conditions.joined(separator: " AND "))
+            ORDER BY rank, f.modified DESC LIMIT ?
+            """
+        let rows = try database.query(sql, [.text(match)] + values + [.integer(Int64(limit * 4))]) { row in
+            SpaceIndex.fileRow(row).map {
+                IndexedFileSearchRow(
+                    file: $0, page: row.optionalInt(5).map(Int.init), markedSnippet: row.string(6),
+                    rank: row.double(7) ?? 0)
+            }
+        }
+        return SpaceIndex.bestPerFile(rows.compactMap { $0 }, limit: limit)
+    }
+
+    /// Files with a page that contains every one of `terms`, also inside words and in text without spaces, newest
+    /// first, with the page's text for a snippet.
+    func searchFileSubstrings(_ terms: [String], filter: IndexFilter, limit: Int) throws -> [IndexedFileSearchRow] {
+        guard !terms.isEmpty, let (conditions, values) = SpaceIndex.fileConditions(for: filter) else { return [] }
+        let extra = conditions.map { " AND " + $0 }.joined()
+        let limitValue = SQLiteValue.integer(Int64(limit * 4))
+        let rows: [IndexedFileSearchRow?]
+        if terms.allSatisfy({ $0.unicodeScalars.count >= 3 }) {
+            let match = terms.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }.joined(
+                separator: " ")
+            rows = try database.query(
+                """
+                SELECT \(SpaceIndex.fileColumns), p.page, file_text.body
+                FROM file_trigram JOIN file_pages p ON p.id = file_trigram.rowid JOIN files f ON f.id = p.file
+                    JOIN file_text ON file_text.rowid = p.id
+                WHERE file_trigram MATCH ?\(extra)
+                ORDER BY f.modified DESC LIMIT ?
+                """, [.text(match)] + values + [limitValue]
+            ) { row in
+                SpaceIndex.fileRow(row).map {
+                    IndexedFileSearchRow(
+                        file: $0, page: row.optionalInt(5).map(Int.init), markedSnippet: row.string(6), rank: 0)
+                }
+            }
+        } else {
+            let contains = terms.map { _ in "instr(file_text.body, ?) > 0" }.joined(separator: " AND ")
+            rows = try database.query(
+                """
+                SELECT \(SpaceIndex.fileColumns), p.page, file_text.body
+                FROM file_text JOIN file_pages p ON p.id = file_text.rowid JOIN files f ON f.id = p.file
+                WHERE \(contains)\(extra)
+                ORDER BY f.modified DESC LIMIT ?
+                """, terms.map { SQLiteValue.text($0) } + values + [limitValue]
+            ) { row in
+                SpaceIndex.fileRow(row).map {
+                    IndexedFileSearchRow(
+                        file: $0, page: row.optionalInt(5).map(Int.init), markedSnippet: row.string(6), rank: 0)
+                }
+            }
+        }
+        return SpaceIndex.bestPerFile(rows.compactMap { $0 }, limit: limit)
+    }
+
+    /// The first row of each file, in the order given.
+    private static func bestPerFile(_ rows: [IndexedFileSearchRow], limit: Int) -> [IndexedFileSearchRow] {
+        var seen = Set<Int64>()
+        return Array(rows.filter { seen.insert($0.file.id).inserted }.prefix(limit))
+    }
+
+    /// Files whose name contains every one of `termKeys`, newest first.
+    func files(named termKeys: [String], filter: IndexFilter, limit: Int) throws -> [IndexedFileRow] {
+        guard !termKeys.isEmpty, let (conditions, values) = SpaceIndex.fileConditions(for: filter) else { return [] }
+        let contains = termKeys.map { _ in "instr(f.name_key, ?) > 0" }
+        return try database.query(
+            """
+            SELECT \(SpaceIndex.fileColumns) FROM files f WHERE \((contains + conditions).joined(separator: " AND "))
+            ORDER BY f.modified DESC LIMIT ?
+            """,
+            termKeys.map { SQLiteValue.text($0) } + values + [.integer(Int64(limit))]
+        ) { SpaceIndex.fileRow($0) }.compactMap { $0 }
+    }
+
+    /// The files among `ids` that pass the filter, by row id.
+    func fileRows(ids: [Int64], filter: IndexFilter) throws -> [Int64: IndexedFileRow] {
+        guard let (conditions, values) = SpaceIndex.fileConditions(for: filter) else { return [:] }
+        var result: [Int64: IndexedFileRow] = [:]
+        for start in stride(from: 0, to: ids.count, by: 500) {
+            let batch = ids[start..<min(start + 500, ids.count)]
+            let marks = Array(repeating: "?", count: batch.count).joined(separator: ", ")
+            let condition = (["f.id IN (\(marks))"] + conditions).joined(separator: " AND ")
+            for row in try database.query(
+                "SELECT \(SpaceIndex.fileColumns) FROM files f WHERE \(condition)", batch.map { .integer($0) } + values,
+                { SpaceIndex.fileRow($0) })
+            {
+                if let row {
+                    result[row.id] = row
+                }
+            }
+        }
+        return result
+    }
+
+    /// The files a note links to or embeds, by row id: matched by name, as links to attachments are.
+    func linkedFileRows(of rowID: Int64) throws -> Set<Int64> {
+        Set(
+            try database.query(
+                "SELECT DISTINCT f.id FROM links l JOIN files f ON f.name_key = l.title_key WHERE l.source = ?",
+                [.integer(rowID)]
+            ) { $0.int(0) })
     }
 
     /// How many items are directly inside the container's folder: notes, files and folders.
     func topLevelItemCount() throws -> Int {
         let notes = try database.first("SELECT count(*) FROM notes WHERE folder_key = ''") { $0.int(0) } ?? 0
-        let files = try database.first("SELECT count(*) FROM files WHERE instr(path_key, '/') = 0") { $0.int(0) } ?? 0
+        let files =
+            try database.first(
+                "SELECT count(*) FROM files WHERE origin = ? AND instr(path_key, '/') = 0",
+                [.integer(FileOrigin.folder.rawValue)]
+            ) { $0.int(0) } ?? 0
         return Int(notes + files)
     }
 }

@@ -142,21 +142,25 @@ struct IndexTests {
         #expect(try await library.titles("lecture") == before)
     }
 
-    @Test("A paused indexer waits")
+    @Test("A paused indexer keeps notes current and holds back reading files until it resumes")
     func pause() async throws {
         let library = try await Library()
         defer { library.fixture.remove() }
         try library.fixture.write("Added while paused: thermodynamics\n", to: "Uni/New.md")
+        try library.fixture.write("Read once resumed: entropy\n", to: "Uni/Heat.txt")
         await library.indexer.pause()
         #expect(await library.indexer.status().isPaused)
         let indexer = library.indexer
         let container = Container.space(library.uni.id)
-        let pass = Task { try await indexer.refresh(container) }
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(try await library.titles("thermodynamics").isEmpty)
-        await library.indexer.resume()
-        #expect(try await pass.value.added == 1)
+        // Notes are indexed while paused: keyword search never falls behind.
+        #expect(try await indexer.refresh(container).added == 1)
         #expect(try await library.titles("thermodynamics") == ["New"])
+        let reading = Task { try await indexer.readFiles(container) }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(try await library.titles("entropy").isEmpty)
+        await library.indexer.resume()
+        #expect(try await reading.value == 1)
+        #expect(try await library.titles("entropy") == ["Heat.txt"])
     }
 
     // MARK: - Search

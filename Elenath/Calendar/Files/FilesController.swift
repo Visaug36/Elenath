@@ -200,6 +200,7 @@ final class FilesController: CalendarChangeObserver {
             scheduleCounting()
         }
         changeToken += 1
+        model.eventFilesMayHaveChanged?()
     }
 
     // MARK: - Listing and Finder

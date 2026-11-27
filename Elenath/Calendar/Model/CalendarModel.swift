@@ -44,7 +44,9 @@ final class CalendarModel {
     // MARK: - Calendar
 
     private(set) var state: CalendarState = .closed
-    private(set) var library = CalendarDocument()
+    private(set) var library = CalendarDocument() {
+        didSet { eventFilesMayHaveChanged?() }
+    }
     /// The calendar is shown, never changed: events.json is from a newer version, or the library is
     /// read-only.
     private(set) var isReadOnly = false
@@ -66,7 +68,9 @@ final class CalendarModel {
     /// The library's spaces, kept current by `AppModel`.
     private(set) var spaces: [Space] = []
     /// Elenath's calendar settings from library.json: each subject's home.
-    private(set) var calendarSettings = CalendarSettings()
+    private(set) var calendarSettings = CalendarSettings() {
+        didSet { eventFilesMayHaveChanged?() }
+    }
     /// Where the calendar is working: everywhere, or inside one space.
     private(set) var workplace: Workplace = .everywhere {
         didSet {
@@ -78,6 +82,9 @@ final class CalendarModel {
     /// Called when the calendar starts working inside a space or everywhere again: the window's own
     /// workplace (its sidebar's tags and folders) follows.
     @ObservationIgnored var workplaceChanged: (@MainActor () -> Void)? = nil
+    /// Called when the events, a subject's home or an event folder's files may have changed: the index works out
+    /// again which event files it holds, and in which space (`CalendarReach.indexedHomes`). Set by `AppModel`.
+    @ObservationIgnored var eventFilesMayHaveChanged: (@MainActor () -> Void)? = nil
     /// What of each event's content may be read from `workplace`.
     var reach: CalendarReach {
         CalendarReach(workplace: workplace, spaces: spaces, settings: calendarSettings)

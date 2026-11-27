@@ -39,6 +39,8 @@ enum Diagnostics {
         lines += await languageModelReport()
         lines.append("")
         lines += await embeddingReport()
+        lines.append("")
+        lines += await meaningReport(model: model)
         return lines.joined(separator: "\n")
     }
 
@@ -82,7 +84,7 @@ enum Diagnostics {
     // MARK: - Embeddings
 
     private static func embeddingReport() async -> [String] {
-        var lines = ["Meaning search (the embedding model, for version 0.2)"]
+        var lines = ["The English embedding model"]
         guard let embedding = NLContextualEmbedding(language: .english) else {
             lines.append("  English: no model on this Mac")
             return lines
@@ -113,6 +115,51 @@ enum Diagnostics {
             embedding.unload()
         } catch {
             lines.append("  Test sentence failed: \(String(describing: error))")
+        }
+        return lines
+    }
+
+    // MARK: - Meaning and files' text
+
+    /// The models search by meaning uses here, what reading files still has to do, and the retrieval benchmark:
+    /// the demo library's questions asked on this Mac's model, in a copy made in a temporary folder for it.
+    /// Names no note or file of the library.
+    @MainActor
+    private static func meaningReport(model: AppModel) async -> [String] {
+        var lines = ["Search by meaning and the text of files"]
+        let embedder = ContextualEmbedder()
+        let models = await embedder.models().sorted { $0.script < $1.script }
+        if models.isEmpty {
+            lines.append("  Embedding models: none on this Mac yet")
+        }
+        for embedding in models {
+            lines.append("  \(embedding.script): \(embedding.stamp.key), \(embedding.dimension) dimensions")
+        }
+        if let services = model.services {
+            let backlog = await services.indexer.backlog()
+            lines.append(
+                "  Files: \(backlog.filesRead) read, \(backlog.filesWaiting) waiting, \(backlog.filesUnreadable) unreadable"
+            )
+            lines.append("  Passages waiting for meaning: \(backlog.passagesWaiting)")
+            lines.append("  Indexing paused: \(model.isIndexingPaused ? "yes" : "no")")
+        }
+        guard !models.isEmpty else { return lines }
+        let folder = FileManager.default.temporaryDirectory.appending(
+            component: "Elenath-benchmark-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let clock = ContinuousClock()
+        let start = clock.now
+        do {
+            let score = try await RetrievalBenchmark.run(
+                embedder: embedder, extractor: SystemTextExtractor(), in: folder)
+            lines.append(
+                "  Retrieval benchmark: \(score.found) of \(score.asked) in the top \(RetrievalBenchmark.topCount), in \(format(clock.now - start))"
+            )
+            for question in score.missed {
+                lines.append("    Missed: \(question)")
+            }
+        } catch {
+            lines.append("  Retrieval benchmark failed: \(String(describing: error))")
         }
         return lines
     }

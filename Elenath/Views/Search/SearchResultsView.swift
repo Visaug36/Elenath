@@ -236,8 +236,17 @@ struct SearchResultsView: View {
         query.modifiedAfter = period.start(from: model.timeSource.now)
         query.space = spaceFilter
         query.folder = folder
+        // Words first, at once; then the same results fused with those by meaning, when they arrive. The
+        // selected row stays selected as it moves.
         let found = (try? await services.retrieval.search(query, from: model.searchOrigin)) ?? []
         guard !Task.isCancelled else { return }
+        show(found)
+        let fused = (try? await services.retrieval.searchByMeaning(query, from: model.searchOrigin)) ?? found
+        guard !Task.isCancelled, fused != found else { return }
+        show(fused)
+    }
+
+    private func show(_ found: [SearchHit]) {
         hits = found
         hasSearched = true
         if let selection, !found.contains(where: { $0.item == selection }) {
@@ -251,15 +260,8 @@ struct SearchResultsView: View {
     }
 
     private func open(_ item: SearchHit.Item) {
-        switch item {
-        case .note(let note):
-            let terms = hits.first { $0.item == item }?.matchedTerms ?? []
-            model.open(note, highlighting: terms)
-        case .file(let container, let path):
-            model.openFile(path, in: container)
-        case .eventFile(_, _, let path):
-            model.revealEventFile(path)
-        }
+        guard let hit = hits.first(where: { $0.item == item }) else { return }
+        model.open(hit)
     }
 }
 
@@ -308,7 +310,7 @@ private struct SearchResultRow: View {
                         .foregroundStyle(Color.textSecondary)
                         .lineLimit(2)
                 }
-                PlaceLabel(container: place.container, folder: place.folder)
+                HitPlaceLabel(hit: hit)
             }
             Spacer(minLength: 8)
             Text(verbatim: DateText.short(hit.modified, now: model.timeSource.now))
@@ -321,19 +323,7 @@ private struct SearchResultRow: View {
     }
 
     private var symbol: String {
-        switch hit.item {
-        case .note: "doc.text"
-        case .file: "doc"
-        case .eventFile: "calendar"
-        }
-    }
-
-    private var place: (container: Container, folder: ItemPath) {
-        switch hit.item {
-        case .note(let note): (note.container, note.path.folder)
-        case .file(let container, let path): (container, path.folder)
-        case .eventFile(let container, _, _): (container, .root)
-        }
+        HitDisplay.symbol(for: hit.item)
     }
 
     /// The snippet with what matched in the primary text color on an amber wash.

@@ -155,8 +155,8 @@ struct NoteHeaderView: View {
     }
 }
 
-/// Below a note's text: the notes that link to it, each with the line that holds the link. Absent when
-/// nothing links here.
+/// Below a note's text: the notes that link to it, each with the line that holds the link, then the notes and
+/// files related to it (docs/DESIGN.md, "The editor"). Each section is absent when it has nothing to show.
 struct BacklinksView: View {
     let note: NoteRef
     let revision: Int
@@ -164,6 +164,10 @@ struct BacklinksView: View {
     let onHeightChange: @MainActor (CGFloat) -> Void
     @Environment(AppModel.self) private var model
     @State private var backlinks: [Backlink] = []
+    @State private var related: [SearchHit] = []
+
+    /// How many related notes and files are shown.
+    static let relatedCount = 5
 
     var body: some View {
         let report = onHeightChange
@@ -187,6 +191,28 @@ struct BacklinksView: View {
                     .buttonStyle(.plain)
                 }
             }
+            if !related.isEmpty {
+                if backlinks.isEmpty {
+                    Rectangle()
+                        .fill(Color.separatorLine)
+                        .frame(height: 1)
+                        .padding(.bottom, 12)
+                }
+                Text("Related")
+                    .font(Typography.caption)
+                    .foregroundStyle(Color.textTertiary)
+                    .accessibilityAddTraits(.isHeader)
+                    .padding(.top, backlinks.isEmpty ? 0 : 14)
+                    .padding(.bottom, 2)
+                ForEach(related, id: \.item) { hit in
+                    Button {
+                        model.open(hit)
+                    } label: {
+                        RelatedRow(hit: hit)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -199,14 +225,51 @@ struct BacklinksView: View {
         }
         .task(id: Key(note: note, revision: revision)) {
             guard let services = model.services else { return }
-            backlinks =
-                (try? await services.retrieval.backlinks(to: note, from: Reach.workplace(of: note.container))) ?? []
+            let workplace = Reach.workplace(of: note.container)
+            backlinks = (try? await services.retrieval.backlinks(to: note, from: workplace)) ?? []
+            // Only what the note's own space may read; nothing while meaning search isn't on this Mac.
+            let found =
+                (try? await services.retrieval.related(to: note, from: workplace, limit: Self.relatedCount)) ?? []
+            guard !Task.isCancelled else { return }
+            related = found
         }
     }
 
     private struct Key: Hashable {
         var note: NoteRef
         var revision: Int
+    }
+}
+
+/// A related note or file: its symbol and title, the passage closest to the note, and its place.
+private struct RelatedRow: View {
+    let hit: SearchHit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: HitDisplay.symbol(for: hit.item))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.textSecondary)
+                    .accessibilityHidden(true)
+                Text(verbatim: hit.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.textPrimary)
+                    .lineLimit(1)
+            }
+            if !hit.snippet.text.isEmpty {
+                Text(verbatim: hit.snippet.text)
+                    .font(Typography.secondary)
+                    .foregroundStyle(Color.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            HitPlaceLabel(hit: hit)
+        }
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
 

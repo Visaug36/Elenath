@@ -904,6 +904,14 @@ final class SpaceIndex {
         }
     }
 
+    /// How many files' text is in `state`.
+    func fileCount(in state: FileTextState) throws -> Int {
+        let count = try database.first(
+            "SELECT count(*) FROM files WHERE text_state = ?", [.integer(state.rawValue)]
+        ) { $0.int(0) }
+        return Int(count ?? 0)
+    }
+
     /// How many files wait to be read.
     func filesWaiting() throws -> Int {
         let count = try database.first(

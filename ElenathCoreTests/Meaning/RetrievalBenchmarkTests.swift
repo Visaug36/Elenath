@@ -43,8 +43,8 @@ struct RetrievalBenchmarkTests {
         #expect(await indexer.backlog() == IndexBacklog(filesWaiting: 1, passagesWaiting: 1))
         await indexer.setTextExtractor(FakeTextExtractor())
         await indexer.readAllFiles()
-        #expect(await indexer.backlog() == IndexBacklog(filesWaiting: 0, passagesWaiting: 2))
+        #expect(await indexer.backlog() == IndexBacklog(filesWaiting: 0, passagesWaiting: 2, filesRead: 1))
         await indexer.embedAll()
-        #expect(await indexer.backlog() == IndexBacklog())
+        #expect(await indexer.backlog() == IndexBacklog(filesRead: 1))
     }
 }

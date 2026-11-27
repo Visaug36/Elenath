@@ -123,6 +123,24 @@ final class AppModel {
     private(set) var contentRevision = 0
     private(set) var isIndexing = false
 
+    // MARK: - Meaning (AppModel+Meaning)
+
+    /// What reading files and finding meaning still have to do, as last counted.
+    var indexBacklog = IndexBacklog()
+    /// The user paused reading files and finding meaning (Settings › Files).
+    var isIndexingPausedByUser = false
+    /// The Mac is in Low Power Mode, which pauses them too.
+    var isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+    /// The scripts the embedder has a model for on this Mac, once asked; empty when search finds words only.
+    var meaningScripts: [String]? = nil
+    /// The calendar's event folders, for working out which event files the index holds; set by `ElenathApp`.
+    @ObservationIgnored var eventFolders: (@MainActor () -> EventFolders?)? = nil
+    @ObservationIgnored var backgroundIndexing: Task<Void, Never>?
+    @ObservationIgnored var backgroundIndexingAgain = false
+    @ObservationIgnored var eventFolderTask: Task<Void, Never>?
+    @ObservationIgnored var eventFoldersAgain = false
+    @ObservationIgnored var powerObserver: (any NSObjectProtocol)?
+
     // MARK: - Editing and importing
 
     /// The note that is open, while `route` is a note.
@@ -157,7 +175,7 @@ final class AppModel {
     /// Bumped by every attempt to open a folder; results of older attempts are dropped.
     @ObservationIgnored private var loadGeneration = 0
     /// Bumped whenever a library opens; work started for an earlier library is dropped.
-    @ObservationIgnored private var librarySession = 0
+    @ObservationIgnored private(set) var librarySession = 0
     @ObservationIgnored private var sidebarGeneration = 0
     /// The workplace the sidebar's tags and sealed folders were last read for.
     @ObservationIgnored private var sidebarWorkplace: Workplace = .everywhere
@@ -411,6 +429,7 @@ final class AppModel {
             }
         }
         contentChanged()
+        scheduleBackgroundIndexing()
     }
 
     /// Looks at a container's folder again after files or folders came or went.
@@ -424,6 +443,7 @@ final class AppModel {
             }
         }
         contentChanged()
+        scheduleBackgroundIndexing()
     }
 
     func refreshSidebar() {
@@ -609,6 +629,11 @@ final class AppModel {
         ownChanges = []
         recoveredEdits = []
         closeSession()
+        backgroundIndexing?.cancel()
+        backgroundIndexing = nil
+        eventFolderTask?.cancel()
+        eventFolderTask = nil
+        indexBacklog = IndexBacklog()
         services = nil
         calendar.close()
         spaces = []
@@ -844,10 +869,14 @@ final class AppModel {
         isIndexing = true
         refreshSidebar()
         Task {
+            await startMeaning(services)
             let reports = await services.indexer.refreshAll()
             guard session == librarySession else { return }
             isIndexing = false
             contentChanged()
+            // The event files the index holds, then what is still to read and to find meaning in.
+            eventFoldersMayHaveChanged()
+            scheduleBackgroundIndexing()
             // Notes renamed in Finder while Elenath was closed.
             await notesMovedOutside(reports.values.flatMap(\.moved))
         }
@@ -866,6 +895,7 @@ final class AppModel {
         }
         isIndexing = false
         contentChanged()
+        scheduleBackgroundIndexing()
     }
 
     private func startWatching(_ root: URL) {
@@ -970,6 +1000,7 @@ final class AppModel {
             await session.fileMayHaveChanged()
         }
         contentChanged()
+        scheduleBackgroundIndexing()
         await notesMovedOutside(moves)
     }
 }

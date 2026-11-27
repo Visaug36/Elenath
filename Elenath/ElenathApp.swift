@@ -38,6 +38,9 @@ struct ElenathApp: App {
         model.calendar.filesForNewEvent = { [weak files] urls, occurrence in
             files?.addFiles(urls, to: occurrence)
         }
+        model.eventFolders = { [weak files] in
+            files?.eventFolders
+        }
         var demoDirector: DemoSceneDirector?
         if options.isDemo, !options.demoScene.isEmpty {
             demoDirector = DemoSceneDirector(scene: options.demoScene, model: model, settings: settings)

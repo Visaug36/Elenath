@@ -18,6 +18,9 @@ extension AppModel {
         calendar.workplaceChanged = { [weak self] in
             self?.workplaceMayHaveChanged()
         }
+        calendar.eventFilesMayHaveChanged = { [weak self] in
+            self?.eventFoldersMayHaveChanged()
+        }
     }
 
     /// The library's spaces or settings were read again: the calendar follows, and opens once a space from

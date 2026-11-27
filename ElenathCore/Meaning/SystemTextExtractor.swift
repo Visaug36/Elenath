@@ -130,14 +130,60 @@
             return try await recognize(image)
         }
 
-        /// The lines Vision recognizes, top to bottom. Throws what Vision throws.
+        /// The lines Vision recognizes, top to bottom. When a request fails, simpler ones are tried: the Mac's own
+        /// languages instead of detecting them, then the fast level (on the macOS 27 runner the accurate,
+        /// detecting request failed with an unknown error). Throws the last error when none works.
         static func recognize(_ image: SendableImage) async throws -> String {
-            var request = RecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            request.automaticallyDetectsLanguage = true
-            let observations = try await request.perform(on: image.image, orientation: nil)
-            return observations.map(\.transcript).joined(separator: "\n")
+            var lastError: (any Error)?
+            for attempt in Attempt.allCases {
+                var request = RecognizeTextRequest()
+                attempt.configure(&request)
+                do {
+                    let observations = try await request.perform(on: image.image, orientation: nil)
+                    return observations.map(\.transcript).joined(separator: "\n")
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                    log.error("Text recognition failed; trying simpler settings", private: String(describing: error))
+                }
+            }
+            throw lastError ?? CancellationError()
+        }
+
+        /// The settings text recognition is tried with, most thorough first.
+        enum Attempt: CaseIterable {
+            case detectingLanguages
+            case macLanguages
+            case fast
+
+            func configure(_ request: inout RecognizeTextRequest) {
+                switch self {
+                case .detectingLanguages:
+                    request.recognitionLevel = .accurate
+                    request.usesLanguageCorrection = true
+                    request.automaticallyDetectsLanguage = true
+                case .macLanguages:
+                    request.recognitionLevel = .accurate
+                    request.usesLanguageCorrection = true
+                    request.automaticallyDetectsLanguage = false
+                    // From Vision's own list, the languages the Mac is set to.
+                    let codes = Set(
+                        Locale.preferredLanguages.compactMap {
+                            Locale.Language(identifier: $0).languageCode?.identifier
+                        })
+                    let chosen = request.supportedRecognitionLanguages.filter {
+                        $0.languageCode.map { codes.contains($0.identifier) } ?? false
+                    }
+                    if !chosen.isEmpty {
+                        request.recognitionLanguages = chosen
+                    }
+                case .fast:
+                    request.recognitionLevel = .fast
+                    request.usesLanguageCorrection = false
+                    request.automaticallyDetectsLanguage = false
+                }
+            }
         }
 
         /// Runs `work` on a utility queue, never on the caller's thread or the cooperative pool.

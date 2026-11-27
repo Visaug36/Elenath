@@ -42,6 +42,7 @@ final class DemoSelfCheck {
             try await step("change folders, then undo") { try await self.changeFolders() }
             try await step("change spaces, then undo") { try await self.changeSpaces() }
             try await step("search") { try await self.search() }
+            try await step("read files and find meaning") { try await self.readFilesAndFindMeaning() }
             try await step("capture") { try await self.capture() }
             try await step("import hostile files") { try await self.importHostileFiles() }
             try await step("rename a note behind Elenath's back") { try await self.renameInFinder() }

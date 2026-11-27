@@ -38,16 +38,21 @@ public struct IndexStatus: Hashable, Sendable {
     public var isIndexing: Bool
 }
 
-/// What the background passes still have to do, over the Inbox and every space.
+/// What the background passes still have to do, over the Inbox and every space, and what they did.
 public struct IndexBacklog: Hashable, Sendable {
     /// Files whose text waits to be read.
     public var filesWaiting = 0
     /// Passages (chunks) waiting for a vector from a model the embedder has.
     public var passagesWaiting = 0
+    /// Files whose text was read, and files that couldn't be read (broken, locked, too slow).
+    public var filesRead = 0
+    public var filesUnreadable = 0
 
-    public init(filesWaiting: Int = 0, passagesWaiting: Int = 0) {
+    public init(filesWaiting: Int = 0, passagesWaiting: Int = 0, filesRead: Int = 0, filesUnreadable: Int = 0) {
         self.filesWaiting = filesWaiting
         self.passagesWaiting = passagesWaiting
+        self.filesRead = filesRead
+        self.filesUnreadable = filesUnreadable
     }
 }
 
@@ -450,8 +455,9 @@ public actor Indexer {
         }
     }
 
-    /// Stops reading files until `resume()`: for Low Power Mode. A pass that is under way finishes the
-    /// notes it is on and waits.
+    /// Holds back reading files' text and making vectors until `resume()`: the user's choice in Settings, and Low
+    /// Power Mode. A reading or a batch under way finishes first. Notes are still indexed as they change, so
+    /// keyword search never falls behind.
     public func pause() {
         isPaused = true
     }
@@ -464,6 +470,11 @@ public actor Indexer {
         IndexStatus(isPaused: isPaused, isIndexing: running > 0)
     }
 
+    /// The scripts the embedder has a model for on this Mac now (ISO 15924), none without an embedder.
+    public func embeddingScripts() async -> [String] {
+        (await embedder?.models() ?? []).map(\.script)
+    }
+
     /// What reading files and making vectors still have to do. A container that can't be read counts nothing.
     public func backlog() async -> IndexBacklog {
         var backlog = IndexBacklog()
@@ -473,6 +484,8 @@ public actor Indexer {
             guard let index = try? index(for: container) else { continue }
             backlog.filesWaiting += (try? index.filesWaiting()) ?? 0
             backlog.passagesWaiting += (try? index.chunksWaiting(scripts: scripts)) ?? 0
+            backlog.filesRead += (try? index.fileCount(in: .read)) ?? 0
+            backlog.filesUnreadable += (try? index.fileCount(in: .failed)) ?? 0
         }
         return backlog
     }
@@ -578,7 +591,6 @@ public actor Indexer {
     }
 
     private func performRefresh(_ container: Container) async throws -> IndexReport {
-        try await waitWhilePaused()
         let (notes, files) = try await walk(container)
         let base = try await catalog.folderURL(of: container)
         let index = try index(for: container)
@@ -610,7 +622,6 @@ public actor Indexer {
 
         var start = 0
         while start < toRead.count {
-            try await waitWhilePaused()
             let chunk = toRead[start..<min(start + Indexer.chunkSize, toRead.count)]
             start += Indexer.chunkSize
             try index.transaction {
@@ -655,7 +666,6 @@ public actor Indexer {
     }
 
     private func performUpdate(_ paths: [ItemPath], in container: Container) async throws -> IndexReport {
-        try await waitWhilePaused()
         var urls: [(path: ItemPath, url: URL)] = []
         for path in paths where ItemPath.isNoteFileName(path.name) {
             // Nothing inside Elenath's own folders or an attachments folder is a note.

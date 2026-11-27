@@ -52,24 +52,52 @@ struct FilesSettingsView: View {
             }
             Section("Index") {
                 LabeledContent("Search index") {
-                    Text(model.isIndexing ? "Updating…" : "Up to date")
+                    indexState
+                        .font(Typography.secondary)
+                        .monospacedDigit()
+                        .foregroundStyle(Color.textSecondary)
+                }
+                LabeledContent("Search by meaning") {
+                    meaningState
                         .font(Typography.secondary)
                         .foregroundStyle(Color.textSecondary)
+                        .multilineTextAlignment(.trailing)
                 }
                 HStack {
                     Text(
-                        "The index is rebuilt from your notes whenever it is missing. It never holds anything that isn't in the folder."
+                        "The index is rebuilt from your notes whenever it is missing. It never holds anything that isn't in the folder. Elenath reads PDFs and pictures on this Mac to find the text in them. Nothing leaves your Mac."
                     )
                     .font(Typography.footnote)
                     .foregroundStyle(Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                     Spacer()
+                    Group {
+                        if model.isIndexingPausedByUser {
+                            Button("Resume Indexing") {
+                                model.setIndexingPaused(false)
+                            }
+                        } else {
+                            Button("Pause Indexing") {
+                                model.setIndexingPaused(true)
+                            }
+                            .accessibilityHint(
+                                Text("Holds back reading files and finding meaning. Search by words keeps working."))
+                        }
+                    }
+                    .disabled(model.state != .ready)
                     Button("Rebuild Index") {
                         Task {
                             await model.rebuildIndex()
                         }
                     }
                     .disabled(model.state != .ready || model.isIndexing)
+                }
+            }
+            .task {
+                // While the tab is open: what reading files and finding meaning still have to do.
+                while !Task.isCancelled {
+                    await model.refreshBacklog()
+                    try? await Task.sleep(for: .seconds(2))
                 }
             }
             Section("Diagnostics") {
@@ -204,6 +232,35 @@ struct FilesSettingsView: View {
                 moveError = LibraryMessages.operationFailed(error)
             }
         }
+    }
+
+    /// What the index is doing, in one line (docs/DESIGN.md, Settings › Files).
+    private var indexState: Text {
+        let backlog = model.indexBacklog
+        if model.isIndexingPausedByUser {
+            return Text("Paused")
+        }
+        if model.isLowPowerMode {
+            return Text("Paused in Low Power Mode")
+        }
+        if model.isIndexing {
+            return Text("Updating…")
+        }
+        if backlog.filesWaiting > 0 {
+            return Text("Reading files · \(backlog.filesWaiting) waiting")
+        }
+        if backlog.passagesWaiting > 0 {
+            return Text("Finding meaning · ^[\(backlog.passagesWaiting) passage](inflect: true) waiting")
+        }
+        return Text("Up to date")
+    }
+
+    /// Whether this Mac has an embedding model, and for which scripts.
+    private var meaningState: Text {
+        guard let scripts = model.meaningScripts else { return Text("Checking…") }
+        guard !scripts.isEmpty else { return Text("Not on this Mac yet: search finds words only") }
+        let names = scripts.map { Locale.current.localizedString(forScriptCode: $0) ?? $0 }
+        return Text("Ready for \(names.formatted(.list(type: .and)))")
     }
 
     private func runDiagnostics() {
